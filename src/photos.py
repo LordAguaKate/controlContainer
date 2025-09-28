@@ -44,7 +44,7 @@ def take_photo(picam2, folder="images"):
         print("Enfocando y preparando para la captura...")
         
         # 3. Cambiar a configuración de alta resolución para la captura
-        capture_config = picam2.create_still_configuration()
+        capture_config = picam2.create_still_configuration(main={"size": (1920, 1080)})
         picam2.switch_mode(capture_config)
         
         # 4. Esperar 1 segundo para que el autoenfoque se ajuste bien
