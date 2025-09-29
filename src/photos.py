@@ -28,6 +28,9 @@ def take_photo(picam2, folder="images"):
     Args:
         picam2: El objeto de la cámara ya inicializado.
         folder: La carpeta donde se guardarán las imágenes.
+
+    Returns:
+        str: La ruta completa al archivo guardado, o None si falla.
     """
     if not picam2:
         print("La cámara no está disponible.")
@@ -54,5 +57,9 @@ def take_photo(picam2, folder="images"):
         picam2.capture_file(filepath)
         print(f"¡Foto guardada exitosamente en: {filepath}!")
 
+        # 6. Devolver la ruta del archivo para que otros módulos puedan usarlo
+        return filepath
+
     except Exception as e:
         print(f"Ocurrió un error al tomar la foto: {e}")
+        return None

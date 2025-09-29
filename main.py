@@ -1,12 +1,35 @@
 import serial
 import time
 from src.photos import setup_camera, take_photo
+from src.api_client import send_image_to_server
 
 # --- Configuración del Puerto Serie ---
 # Revisar el puerto correcto en la Raspberry Pi. Comúnmente es /dev/ttyACM0 o /dev/ttyUSB0
 # Puedes encontrarlo con el comando 'ls /dev/tty*' en la terminal.
 SERIAL_PORT = '/dev/tty*'
 BAUD_RATE = 9600
+
+def process_api_response(response):
+    """
+    Procesa el diccionario de respuesta de la API y toma decisiones.
+    """
+    if response is None:
+        print("No se recibió una respuesta válida del servidor.")
+        return
+
+    print(f"Respuesta de la API: {response}")
+
+    # Verificamos si la llave 'reciclable' existe y es verdadera
+    if response.get("reciclable") is True:
+        tipo_material = response.get('tipo_espanol', 'Desconocido')
+        confianza = response.get('confianza', 'N/A')
+        print(f"Resultado: MATERIAL ACEPTADO ({tipo_material} con {confianza}% de confianza).")
+      
+        
+    else:
+        print("Resultado: MATERIAL NO VÁLIDO O NO RECICLABLE.")
+       
+
 
 def main():
     """
@@ -44,8 +67,17 @@ def main():
 
                 # Si el comando es "FOTO", llamamos a la función para tomar la foto
                 if line == "FOTO":
-                    print("¡Comando de foto recibido! Tomando fotografía...")
-                    take_photo(picam2)
+                    print("¡Comando de foto recibido!")
+                    # 1. Tomar la fotografía
+                    image_path = take_photo(picam2)
+
+                    # 2. Si la foto se tomó correctamente, enviarla al servidor
+                    if image_path:
+                        api_response = send_image_to_server(image_path)
+                        # 3. Procesar la respuesta del servidor
+                        process_api_response(api_response)
+                    else:
+                        print("Fallo al tomar la foto. No se enviará nada al servidor.")
             
             # Pequeña pausa para no saturar el CPU
             time.sleep(0.1)
