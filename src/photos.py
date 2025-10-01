@@ -28,6 +28,9 @@ def take_photo(picam2, folder="images"):
     Args:
         picam2: El objeto de la cámara ya inicializado.
         folder: La carpeta donde se guardarán las imágenes.
+
+    Returns:
+        str: La ruta completa al archivo guardado, o None si falla.
     """
     if not picam2:
         print("La cámara no está disponible.")
@@ -39,12 +42,12 @@ def take_photo(picam2, folder="images"):
 
         # 2. Generar un nombre de archivo único con la fecha y hora
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filepath = os.path.join(folder, f"captura_{timestamp}.png")
+        filepath = os.path.join(folder, f"captura_{timestamp}.jpg")
 
         print("Enfocando y preparando para la captura...")
         
         # 3. Cambiar a configuración de alta resolución para la captura
-        capture_config = picam2.create_still_configuration(main={"size": (1920, 1080)})
+        capture_config = picam2.create_still_configuration(main={"size": (1280, 720)})
         picam2.switch_mode(capture_config)
         
         # 4. Esperar 1 segundo para que el autoenfoque se ajuste bien
@@ -54,5 +57,9 @@ def take_photo(picam2, folder="images"):
         picam2.capture_file(filepath)
         print(f"¡Foto guardada exitosamente en: {filepath}!")
 
+        # 6. Devolver la ruta del archivo para que otros módulos puedan usarlo
+        return filepath
+
     except Exception as e:
         print(f"Ocurrió un error al tomar la foto: {e}")
+        return None
