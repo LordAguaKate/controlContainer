@@ -1,7 +1,6 @@
 import serial
 import time
-from src.photos import setup_camera, take_photo
-from src.api_client import send_image_to_server
+from src import photos, api_client
 
 # --- Configuración del Puerto Serie ---
 # Revisar el puerto correcto en la Raspberry Pi. Comúnmente es /dev/ttyACM0 o /dev/ttyUSB0
@@ -9,89 +8,71 @@ from src.api_client import send_image_to_server
 SERIAL_PORT = '/dev/tty*'
 BAUD_RATE = 9600
 
-def process_api_response(response):
+def process_api_response(response_data):
     """
-    Procesa el diccionario de respuesta de la API y toma decisiones.
+    Procesa la respuesta de la API para determinar la accion.
+    CORREGIDO: Se hace la comparacion explicita 'is True' para mayor seguridad.
     """
-    if response is None:
-        print("No se recibió una respuesta válida del servidor.")
-        return
+    if response_data and response_data.get('success') and response_data.get('data'):
+        scan_data = response_data['data']
+        is_recyclable = scan_data.get('reciclable')
 
-    print(f"Respuesta de la API: {response}")
-
-    # Verificamos si la llave 'reciclable' existe y es verdadera
-    if response.get("reciclable") is True:
-        tipo_material = response.get('tipo_espanol', 'Desconocido')
-        confianza = response.get('confianza', 'N/A')
-        print(f"Resultado: MATERIAL ACEPTADO ({tipo_material} con {confianza}% de confianza).")
-      
-        
+        # --- CORRECCION LOGICA ---
+        # Comparamos explicitamente con 'True'. Esto evita problemas si el valor
+        # fuera None o algo inesperado.
+        if is_recyclable is True:
+            tipo_material = scan_data.get('tipo_espanol', 'Desconocido')
+            print(f"Resultado: MATERIAL RECICLABLE ({tipo_material}).")
+        else:
+            print("Resultado: MATERIAL NO VALIDO O NO RECICLABLE.")
     else:
-        print("Resultado: MATERIAL NO VÁLIDO O NO RECICLABLE.")
-       
+        print("No se recibio una respuesta valida del servidor.")   
 
 
 def main():
-    """
-    Función principal que escucha los comandos del Arduino y controla la cámara.
-    """
-    print("Iniciando el sistema de captura de imágenes...")
+    """Funcion principal del programa."""
+    print("Iniciando sistema de control del contenedor...")
     
-    # Inicializar la cámara
-    picam2 = setup_camera()
-    if not picam2:
-        print("No se pudo iniciar la cámara. El programa terminará.")
+    # Inicializar la camara una sola vez al inicio
+    camera = photos.setup_camera()
+    if not camera:
+        print("No se pudo inicializar la camara. Abortando.")
         return
 
-    # Intentar conectar con el Arduino
-    ser = None
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        # Esperar a que la conexión serie se establezca
-        time.sleep(2) 
         print(f"Conectado al Arduino en {SERIAL_PORT}")
-    except serial.SerialException:
-        print(f"Error: No se pudo abrir el puerto serie {SERIAL_PORT}.")
-        print("Asegúrate de que el Arduino esté conectado y el puerto sea correcto.")
-        picam2.stop()
-        return
-
-    try:
+        time.sleep(2) # Dar tiempo a que se establezca la conexion
+        
         while True:
-            # Revisar si hay datos llegando desde el Arduino
             if ser.in_waiting > 0:
-                # Leer la línea, decodificarla y quitar espacios en blanco/saltos de línea
-                line = ser.readline().decode('utf-8').rstrip()
-                
-                print(f"Recibido de Arduino: '{line}'") # Para depuración
-
-                # Si el comando es "FOTO", llamamos a la función para tomar la foto
-                if line == "FOTO":
-                    print("¡Comando de foto recibido!")
-                    # 1. Tomar la fotografía
-                    image_path = take_photo(picam2)
-
-                    # 2. Si la foto se tomó correctamente, enviarla al servidor
-                    if image_path:
-                        api_response = send_image_to_server(image_path)
-                        # 3. Procesar la respuesta del servidor
-                        process_api_response(api_response)
+                line = ser.readline().decode('utf-8').strip()
+                if line:
+                    if line == "FOTO":
+                        print("!Comando de foto recibido!")
+                        filepath = photos.take_photo(camera)
+                        
+                        if filepath:
+                            api_response = api_client.send_image_to_server(filepath)
+                            if api_response:
+                                print(f"Respuesta de la API: {api_response}")
+                                process_api_response(api_response)
+                            else:
+                                print("El envio de la imagen a la API fallo.")
                     else:
-                        print("Fallo al tomar la foto. No se enviará nada al servidor.")
-            
-            # Pequeña pausa para no saturar el CPU
-            time.sleep(0.1)
+                        print(f"Recibido de Arduino: '{line}'")
 
+    except serial.SerialException as e:
+        print(f"Error al conectar con el puerto serie: {e}")
+        print("Asegurate de que el Arduino este conectado y que el puerto sea el correcto.")
     except KeyboardInterrupt:
-        print("\nPrograma interrumpido por el usuario. Cerrando...")
+        print("\nPrograma detenido por el usuario.")
     finally:
-        # Asegurarse de cerrar los recursos correctamente
-        if ser and ser.is_open:
+        if 'ser' in locals() and ser.is_open:
             ser.close()
-            print("Puerto serie cerrado.")
-        if picam2:
-            picam2.stop()
-            print("Cámara detenida.")
+        if camera:
+            camera.close()
+            print("Camara y puerto serie cerrados correctamente.")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -42,12 +42,12 @@ def take_photo(picam2, folder="images"):
 
         # 2. Generar un nombre de archivo único con la fecha y hora
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filepath = os.path.join(folder, f"captura_{timestamp}.png")
+        filepath = os.path.join(folder, f"captura_{timestamp}.jpg")
 
         print("Enfocando y preparando para la captura...")
         
         # 3. Cambiar a configuración de alta resolución para la captura
-        capture_config = picam2.create_still_configuration(main={"size": (1920, 1080)})
+        capture_config = picam2.create_still_configuration(main={"size": (1280, 720)})
         picam2.switch_mode(capture_config)
         
         # 4. Esperar 1 segundo para que el autoenfoque se ajuste bien
