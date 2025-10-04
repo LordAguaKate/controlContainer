@@ -40,20 +40,16 @@ def send_image_to_server(image_path, user_id):
             response.encoding = 'utf-8'
 
             # --- MEJORA DE DIAGNoSTICO ---
-            # Si el codigo de estado indica un error (4xx o 5xx), imprimimos el cuerpo
-            # completo de la respuesta antes de lanzar la excepcion.
-            if not response.ok:
-                print("--- INICIO DE RESPUESTA DE ERROR DEL SERVIDOR ---")
+            if response.status_code == 200 or response.status_code == 422:
+                print("Respuesta recibida del servidor.")
+                return response.json() # Devolvemos el JSON en ambos casos
+            else:
+                # Para otros errores (como 500), sí los mostramos y fallamos.
+                print("--- INICIO DE RESPUESTA DE ERROR INESPERADO ---")
                 print(f"Código de Estado: {response.status_code}, Cuerpo: {response.text}")
-                print("--- FIN DE RESPUESTA DE ERROR DEL SERVIDOR ---")
-            
-            response.raise_for_status()
-            print("Respuesta recibida del servidor.")
-            return response.json()
+                print("--- FIN DE RESPUESTA DE ERROR INESPERADO ---")
+                return None
 
     except requests.exceptions.RequestException as e:
-        print(f"Error de conexion o en la solicitud a la API: {e}")
-        return None
-    except Exception as e:
-        print(f"Ocurrio un error inesperado al enviar la imagen: {e}")
+        print(f"Error de conexión a la API: {e}")
         return None

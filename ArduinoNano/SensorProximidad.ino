@@ -3,6 +3,7 @@
 
 // --- Pines ---
 const int SENSOR_PIN = 4;     // Pin del sensor infrarrojo
+const int botonPin = 3;  // Botón para finalizar la sesión del usuario.
 const int LED_PIN = 13;       // LED integrado en el Arduino Nano
 
 // --- CONFIGURACIÓN DE TIEMPOS ---
@@ -10,8 +11,13 @@ const long tiempoDeteccionRequerido = 2000; // 2 segundos con objeto para tomar 
 const long tiempoConfirmacionRetiro = 3000; // 3 segundos sin objeto para reiniciar
 
 // --- Máquina de Estados ---
-enum Estado { ESPERANDO, DETECTANDO, EN_PAUSA, CONFIRMANDO_RETIRO };
-Estado estadoActual = ESPERANDO;
+enum Estado {
+  ESPERANDO_OBJETO,
+  DETECTANDO_FOTO,
+  ESPERANDO_RETIRO,
+  VENTANA_DECISION
+};
+Estado estadoActual = ESPERANDO_OBJETO;
 
 // --- Variables de control ---
 unsigned long tiempoPrimerDeteccion = 0;
@@ -19,6 +25,7 @@ unsigned long tiempoPrimerRetiro = 0;
 
 void setup() {
   pinMode(sensorPin, INPUT);
+  pinMode(botonPin, INPUT); // Botón configurado como pull-down.
   pinMode(ledPin, OUTPUT);
   Serial.begin(9600);
   Serial.println("Sensor en modo automatico con confirmacion. Esperando objeto...");
@@ -26,57 +33,59 @@ void setup() {
 
 void loop() {
   bool objetoDetectado = (digitalRead(sensorPin) == LOW);
+  bool botonPresionado = (digitalRead(botonPin) == HIGH);
 
   switch (estadoActual) {
-    case ESPERANDO:
+
+    case ESPERANDO_OBJETO:
       // Estado inicial: esperando que un objeto sea colocado.
       if (objetoDetectado) {
-        tiempoPrimerDeteccion = millis(); // Iniciar temporizador de detección
-        estadoActual = DETECTANDO;
-        digitalWrite(ledPin, HIGH); // Encender LED
-        Serial.println("Estado: Objeto detectado. Iniciando temporizador de 2s...");
+        tiempoInicioDeteccion = millis();
+        estadoActual = DETECTANDO_FOTO;
+        digitalWrite(ledPin, HIGH);
+        Serial.println("Info: Objeto detectado, iniciando temporizador de foto...");
       }
       break;
 
-    case DETECTANDO:
+    case DETECTANDO_FOTO:
       // Un objeto está presente, estamos esperando que pasen 2 segundos.
       if (!objetoDetectado) {
         // Si el objeto se retira antes de tiempo, volvemos a empezar.
-        estadoActual = ESPERANDO;
+        estadoActual = ESPERANDO_OBJETO;
         digitalWrite(ledPin, LOW);
-        Serial.println("Estado: Objeto retirado prematuramente. Reiniciando.");
-      } else if (millis() - tiempoPrimerDeteccion >= tiempoDeteccionRequerido) {
+        Serial.println("Info: Objeto retirado prematuramente. Reiniciando.");
+      } else if (millis() - tiempoInicioDeteccion >= tiempoDeteccionRequerido) {
         // Pasaron los 2 segundos, enviamos la señal para la foto.
-        Serial.println("FOTO");
-        estadoActual = EN_PAUSA;
-        Serial.println("Estado: Foto solicitada. Por favor, retire el objeto.");
+        Serial.println("FOTO"); // Enviar comando a la RPi
+        estadoActual = ESPERANDO_RETIRO;
+        Serial.println("Info: Foto solicitada. Esperando retiro del objeto...");
       }
       break;
 
-    case EN_PAUSA:
-      // La foto ya fue solicitada, esperamos a que el usuario retire el objeto.
+      case ESPERANDO_RETIRO:
       if (!objetoDetectado) {
-        tiempoPrimerRetiro = millis(); // Iniciar temporizador de confirmación
-        estadoActual = CONFIRMANDO_RETIRO;
-        Serial.println("Estado: Objeto retirado. Confirmando en 3s...");
+        tiempoInicioRetiro = millis();
+        estadoActual = VENTANA_DECISION;
+        Serial.println("Info: Objeto retirado. El usuario tiene 3 segundos para decidir...");
       }
       break;
 
-    case CONFIRMANDO_RETIRO:
-      // El objeto fue retirado, ahora contamos 3 segundos para asegurarnos.
-      if (objetoDetectado) {
-        // ¡El objeto volvió! El usuario no lo retiró completamente.
-        estadoActual = EN_PAUSA;
-        Serial.println("Estado: Objeto re-detectado. Vuelva a retirarlo.");
-      } else if (millis() - tiempoPrimerRetiro >= tiempoConfirmacionRetiro) {
-        // Pasaron los 3 segundos sin el objeto, el ciclo terminó.
-        estadoActual = ESPERANDO;
-        digitalWrite(ledPin, LOW); // Apagar LED, listo para la próxima
-        Serial.println("-------------------------------------------------");
-        Serial.println("Estado: Reinicio completo. Listo para proximo ciclo.");
+      case VENTANA_DECISION:
+      // Durante 3 segundos, revisamos si el usuario presiona el botón.
+      if (botonPresionado) {
+        Serial.println("TERMINAR"); // El usuario quiere finalizar la sesión.
+        estadoActual = ESPERANDO_OBJETO; // Listo para el próximo usuario.
+        digitalWrite(ledPin, LOW);
+        // Esperamos a que suelte el botón para no enviar multiples señales
+        while(digitalRead(botonPin) == HIGH) { delay(50); }
+      } else if (millis() - tiempoInicioRetiro >= tiempoDecisionUsuario) {
+        // Pasaron los 3 segundos y no presionó el botón.
+        Serial.println("LISTO_SIGUIENTE"); // Continuar con el siguiente objeto.
+        estadoActual = ESPERANDO_OBJETO;
+        digitalWrite(ledPin, LOW);
+        Serial.println("Info: Ventana de decision terminada. Esperando siguiente objeto...");
       }
       break;
   }
-
-  delay(50); // Pequeña pausa para estabilizar lecturas
+  delay(50);
 }
