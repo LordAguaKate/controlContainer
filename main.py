@@ -1,78 +1,100 @@
 import serial
 import time
-from src import photos, api_client
+from src import photos, api_client, qr_handler
 
-# --- Configuración del Puerto Serie ---
-# Revisar el puerto correcto en la Raspberry Pi. Comúnmente es /dev/ttyACM0 o /dev/ttyUSB0
-# Puedes encontrarlo con el comando 'ls /dev/tty*' en la terminal.
-SERIAL_PORT = '/dev/tty*'
+# --- CONFIGURACIÓN DE PUERTOS SERIE ---
+# ¡IMPORTANTE! Debes verificar estos puertos en tu Raspberry Pi con el comando 'ls /dev/tty* suele ser /dev/ttyACM0 o /dev/ttyUSB0.'
+ARDUINO_PORT = '/dev/tty*'
+QR_SCANNER_PORT = '/dev/tty*' # Este es un ejemplo, podría ser ttyUSB1, etc.
 BAUD_RATE = 9600
 
 def process_api_response(response_data):
-    """
-    Procesa la respuesta de la API para determinar la accion.
-    CORREGIDO: Se hace la comparacion explicita 'is True' para mayor seguridad.
-    """
-    if response_data and response_data.get('success') and response_data.get('data'):
-        scan_data = response_data['data']
+    """Procesa la respuesta de la API, distinguiendo entre éxito y error 422."""
+    if response_data and response_data.get('success') is True:
+        scan_data = response_data.get('data', {})
         is_recyclable = scan_data.get('reciclable')
-
-        # --- CORRECCION LOGICA ---
-        # Comparamos explicitamente con 'True'. Esto evita problemas si el valor
-        # fuera None o algo inesperado.
-        if is_recyclable is True:
-            tipo_material = scan_data.get('tipo_espanol', 'Desconocido')
-            print(f"Resultado: MATERIAL RECICLABLE ({tipo_material}).")
-        else:
-            print("Resultado: MATERIAL NO VALIDO O NO RECICLABLE.")
-    else:
-        print("No se recibio una respuesta valida del servidor.")   
-
+        tipo_material = scan_data.get('tipo_espanol', 'Desconocido')
+        return is_recyclable, tipo_material
+    # Si 'success' no es True, asumimos que no es reciclable.
+    # Esto maneja el caso del 422 donde 'success' es false.
+    return False, response_data.get('errors', "Error de procesamiento")
 
 def main():
-    """Funcion principal del programa."""
+    """Función principal que orquesta todo el flujo."""
     print("Iniciando sistema de control del contenedor...")
     
-    # Inicializar la camara una sola vez al inicio
     camera = photos.setup_camera()
     if not camera:
-        print("No se pudo inicializar la camara. Abortando.")
+        print("CRITICO: No se pudo inicializar la camara. Abortando.")
         return
 
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        print(f"Conectado al Arduino en {SERIAL_PORT}")
-        time.sleep(2) # Dar tiempo a que se establezca la conexion
-        
+        # Inicializamos ambas conexiones serie
+        arduino_ser = serial.Serial(ARDUINO_PORT, BAUD_RATE, timeout=1)
+        qr_ser = serial.Serial(QR_SCANNER_PORT, BAUD_RATE, timeout=1)
+        print(f"Conectado a Arduino en {ARDUINO_PORT} y Lector QR en {QR_SCANNER_PORT}")
+        time.sleep(2)
+        arduino_ser.flushInput() # Limpiar cualquier mensaje antiguo del Arduino
+
+        # --- BUCLE DE USUARIOS (EXTERNO) ---
         while True:
-            if ser.in_waiting > 0:
-                line = ser.readline().decode('utf-8').strip()
-                if line:
-                    if line == "FOTO":
-                        print("!Comando de foto recibido!")
+            print("\n=======================================================")
+            print("--- FASE 1: Esperando escaneo de codigo QR de usuario ---")
+            
+            # --- FASE 1: VALIDACIÓN DE USUARIO ---
+            validated_user_id = None
+            while validated_user_id is None:
+                validated_user_id = qr_handler.validate_user_qr(qr_ser)
+                time.sleep(0.2) # Pequeña pausa para no saturar la CPU
+            
+            print(f"\n--- FASE 2: Usuario valido (ID: {validated_user_id}). Coloque el material. ---")
+            arduino_ser.write(b"START\n") # Comando para activar el Arduino
+
+            # --- BUCLE DE SESIÓN DE RECICLAJE (INTERNO) ---
+            session_active = True
+            while session_active:
+                if arduino_ser.in_waiting > 0:
+                    arduino_msg = arduino_ser.readline().decode('utf-8').strip()
+
+                    if arduino_msg == "FOTO":
+                        print("\n--- FASE 3: Objeto detectado. Procesando... ---")
                         filepath = photos.take_photo(camera)
                         
                         if filepath:
-                            api_response = api_client.send_image_to_server(filepath)
-                            if api_response:
-                                print(f"Respuesta de la API: {api_response}")
-                                process_api_response(api_response)
+                            print("Procesando, espere un poco...")
+                            api_response = api_client.send_image_to_server(filepath, validated_user_id)
+                            
+                            reciclable, tipo = process_api_response(api_response)
+                            if reciclable is True:
+                                print(f"Resultado: MATERIAL RECICLABLE ({tipo}).")
+                                print("[SIMULACION] Activando compuerta y cinta...")
+                                print("--- FASE 4: Deposite el objeto y decida si continuar o terminar. ---")
                             else:
-                                print("El envio de la imagen a la API fallo.")
-                    else:
-                        print(f"Recibido de Arduino: '{line}'")
+                                print(f"Resultado: MATERIAL NO VALIDO ({tipo}). Por favor, retirelo e intente con otro.")
+                        else:
+                            print("Error al tomar la fotografia. Por favor, retire el objeto.")
 
-    except serial.SerialException as e:
-        print(f"Error al conectar con el puerto serie: {e}")
-        print("Asegurate de que el Arduino este conectado y que el puerto sea el correcto.")
-    except KeyboardInterrupt:
-        print("\nPrograma detenido por el usuario.")
+                    elif arduino_msg == "DECISION":
+                        print("\n--- Para terminar presione el botón, para continuar deposite el siguiente objeto. ---")
+                    
+                    elif arduino_msg == "TERMINAR":
+                        print("\n--- FASE 5: Proceso de reciclaje terminado. ---")
+                        print("Actualizando tu historial...")
+                        arduino_ser.write(b"PAUSE\n")
+                        session_active = False
+                    
+                    elif "Info:" in arduino_msg:
+                        print(arduino_msg) # Muestra mensajes de estado del Arduino
+
+    except serial.SerialException as e: print(f"CRITICO: Error al conectar con un puerto serie: {e}")
+    except KeyboardInterrupt: print("\nPrograma detenido.")
     finally:
-        if 'ser' in locals() and ser.is_open:
-            ser.close()
-        if camera:
-            camera.close()
-            print("Camara y puerto serie cerrados correctamente.")
+        if 'arduino_ser' in locals() and arduino_ser.is_open:
+            arduino_ser.write(b"PAUSE\n") # Asegurarse de pausar el Arduino al salir
+            arduino_ser.close()
+        if 'qr_ser' in locals() and qr_ser.is_open: qr_ser.close()
+        if camera: camera.close()
+        print("Conexiones y camara cerradas.")
 
 if __name__ == "__main__":
     main()
