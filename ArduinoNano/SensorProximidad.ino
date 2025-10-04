@@ -3,83 +3,80 @@
 
 // --- Pines ---
 const int SENSOR_PIN = 4;     // Pin del sensor infrarrojo
-const int BOTON_PIN = 3;      // Pin para el botón (configurado como pull-down)
 const int LED_PIN = 13;       // LED integrado en el Arduino Nano
 
-// --- Estados para la máquina de estados ---
-enum Estado {
-  ESPERANDO_OBJETO,            // No hay objeto, esperando que se coloque uno
-  OBJETO_DETECTADO,            // Hay un objeto, esperando pulsación del botón
-  ESPERANDO_RETIRO_OBJETO      // Foto tomada, esperando que se retire el objeto por 3 segundos
-};
-Estado estadoActual = ESPERANDO_OBJETO;
+// --- CONFIGURACIÓN DE TIEMPOS ---
+const long tiempoDeteccionRequerido = 2000; // 2 segundos con objeto para tomar foto
+const long tiempoConfirmacionRetiro = 3000; // 3 segundos sin objeto para reiniciar
 
-// --- Variables para el temporizador de retiro de objeto ---
-unsigned long tiempoObjetoRetirado = 0;
-const long tiempoDeEsperaParaReinicio = 3000; // 3 segundos
+// --- Máquina de Estados ---
+enum Estado { ESPERANDO, DETECTANDO, EN_PAUSA, CONFIRMANDO_RETIRO };
+Estado estadoActual = ESPERANDO;
+
+// --- Variables de control ---
+unsigned long tiempoPrimerDeteccion = 0;
+unsigned long tiempoPrimerRetiro = 0;
 
 void setup() {
-  pinMode(SENSOR_PIN, INPUT);
-  pinMode(BOTON_PIN, INPUT); // Botón pull-down, HIGH cuando se presiona
-  pinMode(LED_PIN, OUTPUT);
+  pinMode(sensorPin, INPUT);
+  pinMode(ledPin, OUTPUT);
   Serial.begin(9600);
-
-  Serial.println("Sistema de captura iniciado.");
-  Serial.println("============================");
+  Serial.println("Sensor en modo automatico con confirmacion. Esperando objeto...");
 }
 
 void loop() {
-  // Leemos el estado actual de los sensores
-  bool objetoPresente = (digitalRead(SENSOR_PIN) == LOW);
-  bool botonPresionado = (digitalRead(BOTON_PIN) == HIGH);
+  bool objetoDetectado = (digitalRead(sensorPin) == LOW);
 
-  // Máquina de estados para controlar el flujo
   switch (estadoActual) {
-    case ESPERANDO_OBJETO:
-      digitalWrite(LED_PIN, LOW); // LED apagado
-      if (objetoPresente) {
-        estadoActual = OBJETO_DETECTADO;
-        Serial.println("Estado: Objeto detectado. Listo para foto.");
+    case ESPERANDO:
+      // Estado inicial: esperando que un objeto sea colocado.
+      if (objetoDetectado) {
+        tiempoPrimerDeteccion = millis(); // Iniciar temporizador de detección
+        estadoActual = DETECTANDO;
+        digitalWrite(ledPin, HIGH); // Encender LED
+        Serial.println("Estado: Objeto detectado. Iniciando temporizador de 2s...");
       }
       break;
 
-    case OBJETO_DETECTADO:
-      digitalWrite(LED_PIN, HIGH); // LED encendido para indicar que está listo
-      if (!objetoPresente) {
-        // Si el objeto se retira antes de tomar la foto, volvemos al estado inicial
-        estadoActual = ESPERANDO_OBJETO;
-        Serial.println("Estado: Objeto retirado. Esperando nuevo objeto.");
-      } else if (botonPresionado) {
-        // Si se presiona el botón CON el objeto presente
-        Serial.println("FOTO"); // Enviamos el comando a la Raspberry Pi
-        estadoActual = ESPERANDO_RETIRO_OBJETO;
-        Serial.println("Estado: Foto solicitada. Esperando retiro del objeto...");
-        delay(200); // Pequeño delay para evitar múltiples lecturas del botón
+    case DETECTANDO:
+      // Un objeto está presente, estamos esperando que pasen 2 segundos.
+      if (!objetoDetectado) {
+        // Si el objeto se retira antes de tiempo, volvemos a empezar.
+        estadoActual = ESPERANDO;
+        digitalWrite(ledPin, LOW);
+        Serial.println("Estado: Objeto retirado prematuramente. Reiniciando.");
+      } else if (millis() - tiempoPrimerDeteccion >= tiempoDeteccionRequerido) {
+        // Pasaron los 2 segundos, enviamos la señal para la foto.
+        Serial.println("FOTO");
+        estadoActual = EN_PAUSA;
+        Serial.println("Estado: Foto solicitada. Por favor, retire el objeto.");
       }
       break;
 
-    case ESPERANDO_RETIRO_OBJETO:
-      digitalWrite(LED_PIN, LOW); // LED parpadea para indicar que espera retiro
-      delay(150);
-      digitalWrite(LED_PIN, HIGH);
-      delay(150);
+    case EN_PAUSA:
+      // La foto ya fue solicitada, esperamos a que el usuario retire el objeto.
+      if (!objetoDetectado) {
+        tiempoPrimerRetiro = millis(); // Iniciar temporizador de confirmación
+        estadoActual = CONFIRMANDO_RETIRO;
+        Serial.println("Estado: Objeto retirado. Confirmando en 3s...");
+      }
+      break;
 
-      if (!objetoPresente) {
-        // Si el objeto ya no está, iniciamos el contador
-        if (tiempoObjetoRetirado == 0) {
-          tiempoObjetoRetirado = millis();
-        }
-        
-        // Verificamos si han pasado los 3 segundos
-        if (millis() - tiempoObjetoRetirado >= tiempoDeEsperaParaReinicio) {
-          Serial.println("Estado: Sistema reiniciado. Esperando nuevo objeto.");
-          estadoActual = ESPERANDO_OBJETO;
-          tiempoObjetoRetirado = 0; // Reseteamos el contador
-        }
-      } else {
-        // Si el objeto vuelve a aparecer, reseteamos el contador
-        tiempoObjetoRetirado = 0;
+    case CONFIRMANDO_RETIRO:
+      // El objeto fue retirado, ahora contamos 3 segundos para asegurarnos.
+      if (objetoDetectado) {
+        // ¡El objeto volvió! El usuario no lo retiró completamente.
+        estadoActual = EN_PAUSA;
+        Serial.println("Estado: Objeto re-detectado. Vuelva a retirarlo.");
+      } else if (millis() - tiempoPrimerRetiro >= tiempoConfirmacionRetiro) {
+        // Pasaron los 3 segundos sin el objeto, el ciclo terminó.
+        estadoActual = ESPERANDO;
+        digitalWrite(ledPin, LOW); // Apagar LED, listo para la próxima
+        Serial.println("-------------------------------------------------");
+        Serial.println("Estado: Reinicio completo. Listo para proximo ciclo.");
       }
       break;
   }
+
+  delay(50); // Pequeña pausa para estabilizar lecturas
 }

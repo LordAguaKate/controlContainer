@@ -1,78 +1,96 @@
 import serial
 import time
-from src import photos, api_client
+from src import photos, api_client, qr_handler
 
-# --- Configuración del Puerto Serie ---
-# Revisar el puerto correcto en la Raspberry Pi. Comúnmente es /dev/ttyACM0 o /dev/ttyUSB0
-# Puedes encontrarlo con el comando 'ls /dev/tty*' en la terminal.
-SERIAL_PORT = '/dev/tty*'
+# --- CONFIGURACIÓN DE PUERTOS SERIE ---
+# ¡IMPORTANTE! Debes verificar estos puertos en tu Raspberry Pi con el comando 'ls /dev/tty* suele ser /dev/ttyACM0 o /dev/ttyUSB0.'
+ARDUINO_PORT = '/dev/tty*'
+QR_SCANNER_PORT = '/dev/tty*' # Este es un ejemplo, podría ser ttyUSB1, etc.
 BAUD_RATE = 9600
 
 def process_api_response(response_data):
-    """
-    Procesa la respuesta de la API para determinar la accion.
-    CORREGIDO: Se hace la comparacion explicita 'is True' para mayor seguridad.
-    """
-    if response_data and response_data.get('success') and response_data.get('data'):
+    """Procesa la respuesta de la API para determinar la acción."""
+    if response_data and response_data.get('data'):
         scan_data = response_data['data']
         is_recyclable = scan_data.get('reciclable')
 
-        # --- CORRECCION LOGICA ---
-        # Comparamos explicitamente con 'True'. Esto evita problemas si el valor
-        # fuera None o algo inesperado.
         if is_recyclable is True:
             tipo_material = scan_data.get('tipo_espanol', 'Desconocido')
             print(f"Resultado: MATERIAL RECICLABLE ({tipo_material}).")
         else:
             print("Resultado: MATERIAL NO VALIDO O NO RECICLABLE.")
     else:
-        print("No se recibio una respuesta valida del servidor.")   
+        print("No se recibió una respuesta de escaneo válida del servidor.")
 
 
 def main():
-    """Funcion principal del programa."""
+    """Función principal que orquesta todo el flujo."""
     print("Iniciando sistema de control del contenedor...")
     
-    # Inicializar la camara una sola vez al inicio
     camera = photos.setup_camera()
     if not camera:
-        print("No se pudo inicializar la camara. Abortando.")
+        print("CRITICO: No se pudo inicializar la camara. Abortando.")
         return
 
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        print(f"Conectado al Arduino en {SERIAL_PORT}")
-        time.sleep(2) # Dar tiempo a que se establezca la conexion
-        
+        # Inicializamos ambas conexiones serie
+        arduino_ser = serial.Serial(ARDUINO_PORT, BAUD_RATE, timeout=1)
+        qr_ser = serial.Serial(QR_SCANNER_PORT, BAUD_RATE, timeout=1)
+        print(f"Conectado a Arduino en {ARDUINO_PORT}")
+        print(f"Conectado a Lector QR en {QR_SCANNER_PORT}")
+        time.sleep(2)
+
+        # Bucle principal del programa
         while True:
-            if ser.in_waiting > 0:
-                line = ser.readline().decode('utf-8').strip()
-                if line:
+            print("\n--- Esperando escaneo de codigo QR... ---")
+            
+            # --- FASE 1: VALIDACIÓN DE USUARIO ---
+            validated_user_id = None
+            while validated_user_id is None:
+                validated_user_id = qr_handler.validate_user_qr(qr_ser)
+                if validated_user_id is None:
+                    # Si no hay usuario, revisamos si hay mensajes del Arduino (ej. "Objeto retirado")
+                    if arduino_ser.in_waiting > 0:
+                        line = arduino_ser.readline().decode('utf-8').strip()
+                        if line: print(f"Info de Arduino: '{line}'")
+                    time.sleep(0.5) # Pequeña pausa para no saturar la CPU
+            
+            print("\n--- Usuario valido, coloque el material en el contenedor. ---")
+            
+            # --- FASE 2: DETECCIÓN DE OBJETO Y FOTO ---
+            foto_tomada = False
+            while not foto_tomada:
+                if arduino_ser.in_waiting > 0:
+                    line = arduino_ser.readline().decode('utf-8').strip()
                     if line == "FOTO":
-                        print("!Comando de foto recibido!")
+                        print("!Comando de foto automatico recibido!")
                         filepath = photos.take_photo(camera)
                         
                         if filepath:
-                            api_response = api_client.send_image_to_server(filepath)
+                            api_response = api_client.send_image_to_server(filepath, validated_user_id)
                             if api_response:
                                 print(f"Respuesta de la API: {api_response}")
                                 process_api_response(api_response)
                             else:
                                 print("El envio de la imagen a la API fallo.")
-                    else:
-                        print(f"Recibido de Arduino: '{line}'")
+                        
+                        foto_tomada = True # Salimos de este bucle para esperar al siguiente QR
+                    elif line:
+                        print(f"Info de Arduino: '{line}'")
+                
+                time.sleep(0.1)
 
     except serial.SerialException as e:
-        print(f"Error al conectar con el puerto serie: {e}")
-        print("Asegurate de que el Arduino este conectado y que el puerto sea el correcto.")
+        print(f"CRITICO: Error al conectar con un puerto serie: {e}")
+        print("Verifica que ambos dispositivos esten conectados y los puertos sean correctos.")
     except KeyboardInterrupt:
         print("\nPrograma detenido por el usuario.")
     finally:
-        if 'ser' in locals() and ser.is_open:
-            ser.close()
-        if camera:
-            camera.close()
-            print("Camara y puerto serie cerrados correctamente.")
+        # Cerrar todas las conexiones al salir
+        if 'arduino_ser' in locals() and arduino_ser.is_open: arduino_ser.close()
+        if 'qr_ser' in locals() and qr_ser.is_open: qr_ser.close()
+        if camera: camera.close()
+        print("Conexiones y camara cerradas correctamente.")
 
 if __name__ == "__main__":
     main()
