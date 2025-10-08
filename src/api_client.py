@@ -1,9 +1,6 @@
 import requests
 import os
-from src.config import CONTAINER_ID # Solo importamos el ID del contenedor
-# --- URL del Endpoint en Laravel ---
-# ¡IMPORTANTE! Debes reemplazar esto con la URL real de tu API.
-API_URL = "COLOCA LA URL DE TU API"
+from src.config import CONTAINER_ID, API_SCAN_URL
 
 # --- MODIFICADO ---
 # La función ahora ACEPTA el user_id como parámetro.
@@ -18,7 +15,7 @@ def send_image_to_server(image_path, user_id):
         print(f"Error: El archivo de imagen no se encuentra en la ruta: {image_path}")
         return None
 
-    print(f"Enviando imagen '{os.path.basename(image_path)}' al servidor con container_id={CONTAINER_ID} y user_id={USER_ID}...")
+    print(f"Enviando imagen '{os.path.basename(image_path)}' al servidor con container_id={CONTAINER_ID} y user_id={user_id}...")
 
     try:
         # 1. Preparamos los campos de datos adicionales
@@ -34,7 +31,7 @@ def send_image_to_server(image_path, user_id):
             }
             
             # 4. Hacemos la solicitud POST con un timeout de 30 segundos
-            response = requests.post(API_URL, data=data_payload, files=files_payload, timeout=120)
+            response = requests.post(API_SCAN_URL, data=data_payload, files=files_payload, timeout=120)
             
             # 5. Lanza una excepción si la respuesta del servidor es un error (4xx o 5xx)
             response.encoding = 'utf-8'

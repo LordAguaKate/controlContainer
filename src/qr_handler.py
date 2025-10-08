@@ -1,9 +1,7 @@
 import serial
 import requests
 import time
-
-# URL del endpoint de validación de usuario
-API_URL = "COLOCA LA URL DE TU API"
+from src.config import API_VALIDATE_URL
 
 def validate_user_qr(qr_serial_port):
     """
@@ -19,7 +17,7 @@ def validate_user_qr(qr_serial_port):
             print(f"Token QR recibido: '{token}'")
 
             headers = {"Authorization": f"Bearer {token}"}
-            response = requests.post(API_URL, headers=headers, timeout=15)
+            response = requests.post(API_VALIDATE_URL, headers=headers, timeout=15)
 
             if response.status_code == 200:
                 data = response.json()
