@@ -18,7 +18,7 @@ def send_image_to_server(image_path, user_id):
         print(f"Error: El archivo de imagen no se encuentra en la ruta: {image_path}")
         return None
 
-    print(f"Enviando imagen '{os.path.basename(image_path)}' al servidor con container_id={CONTAINER_ID} y user_id={USER_ID}...")
+    print(f"Enviando imagen '{os.path.basename(image_path)}' al servidor con container_id={CONTAINER_ID} y user_id={user_id}...")
 
     try:
         # 1. Preparamos los campos de datos adicionales
