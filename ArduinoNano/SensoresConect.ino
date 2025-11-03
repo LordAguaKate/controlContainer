@@ -1,4 +1,3 @@
-
 // --- LIBRERÍAS ---
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -15,9 +14,6 @@ const int BUZZER_PIN = 5;
 // --- CONFIGURACIÓN DE TIEMPOS ---
 const long tiempoDeteccionRequerido = 2000;
 const long tiempoInactividadSesion = 60000; // 60 segundos
-const int SCROLL_DELAY = 400; // ms para el scroll
-
-// --- CAMBIO 1: Ajuste de tiempo de pausa ---
 const long TIEMPO_MENSAJE = 3000; // 3 seg para mostrar mensajes
 
 // --- Máquina de Estados ---
@@ -38,7 +34,6 @@ Estado estadoActual = INACTIVO;
 // --- Variables de control ---
 unsigned long tiempoPrimerDeteccion = 0;
 unsigned long tiempoUltimaActividad = 0;
-unsigned long tiempoUltimoScroll = 0;
 unsigned long tiempoInicioPausa = 0;
 
 // --- FUNCIÓN AUXILIAR PARA EL BUZZER ---
@@ -52,7 +47,6 @@ void beep(int duracion) {
 void cambiarEstado(Estado nuevoEstado) {
   estadoActual = nuevoEstado;
   tiempoInicioPausa = millis(); // Para los estados de pausa
-  tiempoUltimoScroll = millis(); // Reinicia el scroll
   tiempoUltimaActividad = millis(); // Reinicia el timeout de inactividad
 }
 
@@ -66,7 +60,7 @@ void setup() {
   digitalWrite(BUZZER_PIN, LOW);
 
   Serial.begin(9600);
-  Serial.println("Sistema de Sensores Conectados INICIADO. (v2.7)");
+  Serial.println("Sistema de Sensores Conectados INICIADO.");
 
   lcd.init();
   lcd.backlight();
@@ -79,7 +73,7 @@ void setup() {
   tiempoUltimaActividad = millis();
 }
 
-// --- Revisar comandos de la Pi ---
+// --- Revisar comandos de la Pi (SIN DELAYS) ---
 void leerComandosSerial() {
   if (Serial.available() > 0) {
     String comando = Serial.readStringUntil('\n');
@@ -91,7 +85,9 @@ void leerComandosSerial() {
       beep(50);
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print("Iniciando sesion Por favor espere...");
+      lcd.print("Iniciando sesion"); 
+      lcd.setCursor(0, 1);
+      lcd.print("Por favor espere"); 
       cambiarEstado(VALIDANDO_QR);
     }
     
@@ -101,9 +97,9 @@ void leerComandosSerial() {
       beep(50); delay(50); beep(50);
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print("Error al iniciar");
+      lcd.print("Error al iniciar"); 
       lcd.setCursor(0, 1);
-      lcd.print("Intente de nuevo");
+      lcd.print("Intente de nuevo"); 
       cambiarEstado(MOSTRANDO_ERROR_SESION);
     }
 
@@ -115,23 +111,23 @@ void leerComandosSerial() {
       beep(150);
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print("Sesion correcta");
+      lcd.print("Sesion correcta"); 
       lcd.setCursor(0, 1);
-      lcd.print("Bienvenid@ " + name);
+      lcd.print(name); 
       
       cambiarEstado(MOSTRANDO_BIENVENIDA_1);
     }
 
-    // 4. Lógica de respuesta de API 
+    // 4. Lógica de respuesta de API (para la foto)
     if (estadoActual == PROCESANDO_FOTO) {
       if (comando.startsWith("APROBADO:")) {
         String material = comando.substring(9);
         beep(300);
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Aprobado:");
+        lcd.print("Material:"); 
         lcd.setCursor(0, 1);
-        lcd.print(material);
+        lcd.print(material); 
         Serial.println("Info: Pi aprobo el material. Esperando retiro.");
         cambiarEstado(MOSTRANDO_APROBADO);
 
@@ -139,7 +135,9 @@ void leerComandosSerial() {
         beep(50); delay(50); beep(50);
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("No reciclable"); 
+        lcd.print("Material"); 
+        lcd.setCursor(0, 1);
+        lcd.print("No Reciclable"); 
         Serial.println("Info: Pi rechazo el material. Esperando retiro.");
         cambiarEstado(MOSTRANDO_RECHAZADO);
       }
@@ -156,15 +154,15 @@ void finalizarSesion(String motivo) {
     beep(150); delay(50); beep(100);
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Sesion terminada");
+    lcd.print("Sesion terminada"); 
     lcd.setCursor(0, 1);
-    lcd.print("!Gracias!");
+    lcd.print("!Gracias!"); 
     delay(2000); 
   }
   
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Escanee su QR...");
+  lcd.print("Escanee su QR..."); 
   estadoActual = INACTIVO;
   tiempoUltimaActividad = millis();
 }
@@ -174,17 +172,7 @@ void loop() {
   // 1. Siempre escuchar a la Pi
   leerComandosSerial();
 
-  // --- Lógica de Scroll ---
-  if (estadoActual == VALIDANDO_QR ||
-      estadoActual == ESPERANDO_OBJETO ||
-      estadoActual == PROCESANDO_FOTO ||
-      estadoActual == ESPERANDO_RETIRO)
-  {
-    if (millis() - tiempoUltimoScroll > SCROLL_DELAY) {
-      lcd.scrollDisplayLeft();
-      tiempoUltimoScroll = millis();
-    }
-  }
+  // --- LÓGICA DE SCROLL ELIMINADA ---
 
   // 3. Lógica de Sesión Activa (Timeout y Botón)
   if (estadoActual == ESPERANDO_OBJETO ||
@@ -220,27 +208,30 @@ void loop() {
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Objeto detectado");
+        lcd.print("Objeto detectado"); 
         lcd.setCursor(0, 1);
-        lcd.print("Espere 2 seg...");
+        lcd.print("Espere 2 seg..."); 
         Serial.println("Info: Objeto detectado, iniciando temporizador de foto...");
         cambiarEstado(DETECTANDO_FOTO);
       }
       break;
 
     case DETECTANDO_FOTO:
-      if (digitalRead(SENSOR_PIN) == HIGH) { 
+      if (digitalRead(SENSOR_PIN) == HIGH) { // Objeto retirado
         digitalWrite(LED_PIN, LOW);
         beep(50); delay(50); beep(50);
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Objeto retirado");
+        lcd.print("Objeto retirado"); 
         lcd.setCursor(0, 1);
-        lcd.print("Reiniciando...");
+        lcd.print("Reiniciando..."); 
         Serial.println("Info: Objeto retirado prematuramente. Reiniciando.");
-        delay(1500); // Pausa corta para leer
+        delay(1500); 
         lcd.clear();
-        lcd.setCursor(0, 0); lcd.print("Deposite el objeto en el contenedor...");
+        lcd.setCursor(0, 0); 
+        lcd.print("Deposite objeto"); 
+        lcd.setCursor(0, 1); 
+        lcd.print("en el contenedor"); 
         cambiarEstado(ESPERANDO_OBJETO);
         
       } else if (millis() - tiempoPrimerDeteccion >= tiempoDeteccionRequerido) {
@@ -248,18 +239,22 @@ void loop() {
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Procesando por favor espere...");
+        lcd.print("Procesando..."); 
+        lcd.setCursor(0, 1);
+        lcd.print("Espere por favor"); 
         Serial.println("Info: Foto solicitada. Esperando respuesta de la API...");
         cambiarEstado(PROCESANDO_FOTO);
       }
       break;
 
     case ESPERANDO_RETIRO:
-      if (digitalRead(SENSOR_PIN) == HIGH) { 
+      if (digitalRead(SENSOR_PIN) == HIGH) { // Objeto retirado
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Deposite otro o pulse para finalizar...");
+        lcd.print("Deposite otro o"); 
+        lcd.setCursor(0, 1);
+        lcd.print("pulse p/ salir"); 
         Serial.println("Info: Objeto retirado. Esperando siguiente objeto o fin de sesion...");
         cambiarEstado(ESPERANDO_OBJETO);
       }
@@ -282,7 +277,9 @@ void loop() {
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Deposite el objeto en el contenedor...");
+        lcd.print("Deposite objeto"); 
+        lcd.setCursor(0, 1);
+        lcd.print("en contenedor"); 
         cambiarEstado(ESPERANDO_OBJETO);
       }
       break;
@@ -293,7 +290,9 @@ void loop() {
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Retirando material espere por favor...");
+        lcd.print("Retirando..."); 
+        lcd.setCursor(0, 1);
+        lcd.print("Espere por favor"); 
         cambiarEstado(ESPERANDO_RETIRO);
       }
       break;
@@ -302,7 +301,8 @@ void loop() {
     case INACTIVO:
     case VALIDANDO_QR:
     case PROCESANDO_FOTO:
+      // No hacer nada, solo esperar comandos
       break;
   }
-  delay(50); 
+  delay(50); // Pequeño delay general
 }
