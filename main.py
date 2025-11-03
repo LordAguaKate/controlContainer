@@ -15,23 +15,28 @@ def strip_accents(s):
                    if unicodedata.category(c) != 'Mn')
 
 def process_api_response(response_data):
-    """Procesa la respuesta de la API, distinguiendo entre exito y error 422."""
-    if response_data and response_data.get('success') is True:
+    
+    # Esto previene el crash.
+    if response_data is None:
+        return False, "Error de IA"
+
+    # Si la respuesta Si existe, continuamos como antes.
+    if response_data.get('success') is True:
         scan_data = response_data.get('data', {})
         is_recyclable = scan_data.get('reciclable')
         tipo_material = scan_data.get('tipo_espanol', 'Desconocido')
         return is_recyclable, tipo_material
     
-    # Maneja error 422 (no exitoso) o cualquier otra respuesta no esperada
+    # Maneja error 422 (no exitoso) o cualquier otra respuesta no exitosa
     error_msg = response_data.get('errors', "Error de IA")
     if isinstance(error_msg, dict):
         error_msg_list = next(iter(error_msg.values()), ["Error de IA"])
         error_msg = error_msg_list[0] if error_msg_list else "Error de IA"
         
     return False, error_msg
-
+    
 def main():
-    """Función principal que orquesta todo el flujo."""
+    # --- INICIO DEL PROGRAMA ---
     print("Iniciando sistema de control del contenedor...")
     
     camera = photos.setup_camera()
@@ -53,16 +58,45 @@ def main():
             print("--- FASE 1: Esperando escaneo de codigo QR de usuario ---")
             
             # --- FASE 1: VALIDACION DE USUARIO ---
+            qr_ser.flushInput()
             validated_user_id = None
-            while validated_user_id is None:
-                validated_user_id = qr_handler.validate_user_qr(qr_ser)
+            
+            # 1. Bucle para *leer* un token
+            token = None
+            while token is None:
+                token = qr_handler.read_token(qr_ser)
                 time.sleep(0.2) # Pausa para no saturar la CPU
             
-            print(f"\n--- FASE 2: Usuario valido (ID: {validated_user_id}). Activando Arduino... ---")
-            # --- CAMBIO ---
-            # Enviamos "START" para que el Arduino salga del estado INACTIVO
-            arduino_ser.write(b"START\n") 
-            print("--- FASE 3: Arduino activado. Esperando objetos... ---")
+            # 2. Token leido. Notificar al Arduino y validar con la API
+            print(f"Token QR leido. Enviando a Arduino para validar...")
+            arduino_ser.write(b"VALIDANDO\n")
+            
+            user_id, user_name = qr_handler.validate_token(token)
+
+            # 3. Reaccionar al resultado de la validacion
+            if user_id:
+                print(f"-> Usuario valido. ID: {user_id}, Nombre: {user_name}")
+                validated_user_id = user_id
+                
+                # Obtener solo el primer nombre y sin acentos
+                first_name = user_name.split()[0]
+                first_name_simple = strip_accents(first_name)
+                
+                # Enviar comando de exito al Arduino
+                arduino_ser.write(f"SESION_OK:{first_name_simple}\n".encode('utf-8'))
+                
+                print(f"\n--- FASE 2: Usuario valido (ID: {validated_user_id}). Activando Arduino... ---")
+                print("--- FASE 3: Arduino activado. Esperando objetos... ---")
+                
+            else:
+                # --- FALLO ---
+                print("-> Error de validacion. Reiniciando bucle de QR.")
+                # Enviar comando de error al Arduino
+                arduino_ser.write(b"ERROR_SESION\n")
+                
+                # Volver al inicio del bucle de FASE 1
+                time.sleep(0.5) 
+                continue 
 
             
             # --- BUCLE DE SESION DE RECICLAJE (INTERNO) ---
@@ -91,8 +125,6 @@ def main():
                                 if reciclable is True:
                                     print(f"Resultado: MATERIAL RECICLABLE ({tipo}).")
                                     
-                                    # --- SOLUCION DEFINITIVA ---
-                                    # Usamos la nueva funcion 'strip_accents'
                                     tipo_simple = strip_accents(tipo)
                                     
                                     arduino_ser.write(f"APROBADO:{tipo_simple}\n".encode('utf-8'))
@@ -105,7 +137,7 @@ def main():
                                     # Enviar comando RECHAZADO al Arduino
                                     arduino_ser.write(b"RECHAZADO\n")
                                     print("--- FASE 5: Espere a que se retire e intente con otro. ---")
-                                    # --- FIN DE NUEVA LOGICA ---
+
                             
                             else:
                                 print("Error al tomar la fotografia. Retirando...")
@@ -127,8 +159,7 @@ def main():
     except serial.SerialException as e: print(f"CRITICO: Error al conectar con un puerto serie: {e}")
     except KeyboardInterrupt: print("\nPrograma detenido.")
     finally:
-        # --- CAMBIO ---
-        # Ya no es necesario enviar "PAUSE" al cerrar.
+
         if 'arduino_ser' in locals() and arduino_ser.is_open:
             arduino_ser.close()
         if 'qr_ser' in locals() and qr_ser.is_open: qr_ser.close()
