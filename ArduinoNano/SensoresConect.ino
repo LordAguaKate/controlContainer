@@ -1,14 +1,20 @@
 // --- LIBRERÍAS ---
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <Adafruit_NeoPixel.h> // LIBRERÍA AGREGADA
 
 // --- INICIALIZACIÓN DE LCD ---
 LiquidCrystal_I2C lcd(0x27, 16, 2); // 0x27 o 0x3F
 
-// --- PINES ---
+// --- CONFIGURACIÓN DE TIRA LED ---
+#define PIN_LED_TIRA 13    // Pin de datos para la tira (Antes era LED_PIN)
+#define NUM_LEDS 30        // Cantidad de LEDs en tu tira
+// Inicializamos el objeto de la tira
+Adafruit_NeoPixel tiraled = Adafruit_NeoPixel(NUM_LEDS, PIN_LED_TIRA, NEO_GRB + NEO_KHZ800);
+
+// --- OTROS PINES ---
 const int SENSOR_PIN = 4;
 const int botonPin = 3;
-const int LED_PIN = 13;
 const int BUZZER_PIN = 5;
 
 // --- CONFIGURACIÓN DE TIEMPOS ---
@@ -36,6 +42,15 @@ unsigned long tiempoPrimerDeteccion = 0;
 unsigned long tiempoUltimaActividad = 0;
 unsigned long tiempoInicioPausa = 0;
 
+// --- FUNCIÓN AUXILIAR PARA LA TIRA LED ---
+// Llena toda la tira con un color especifico
+void colorFull(uint32_t color) {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    tiraled.setPixelColor(i, color);
+  }
+  tiraled.show();
+}
+
 // --- FUNCIÓN AUXILIAR PARA EL BUZZER ---
 void beep(int duracion) {
   digitalWrite(BUZZER_PIN, HIGH);
@@ -46,18 +61,22 @@ void beep(int duracion) {
 // --- FUNCIÓN PARA CAMBIAR ESTADO (Reinicia timers) ---
 void cambiarEstado(Estado nuevoEstado) {
   estadoActual = nuevoEstado;
-  tiempoInicioPausa = millis(); // Para los estados de pausa
+  tiempoInicioPausa = millis(); // Para los estados de pausatambien
   tiempoUltimaActividad = millis(); // Reinicia el timeout de inactividad
 }
 
 void setup() {
   pinMode(SENSOR_PIN, INPUT);
   pinMode(botonPin, INPUT);
-  pinMode(LED_PIN, OUTPUT);
+  // pinMode(LED_PIN, OUTPUT); -> YA NO ES NECESARIO, LO MANEJA LA LIBRERÍA NEOPIXEL
   pinMode(BUZZER_PIN, OUTPUT);
 
-  digitalWrite(LED_PIN, LOW);
   digitalWrite(BUZZER_PIN, LOW);
+
+  // Inicializar Tira LED
+  tiraled.begin();
+  tiraled.show(); // Apaga todos los LEDs inicialmente
+  colorFull(tiraled.Color(0, 0, 0)); // Aseguramos que inicie apagada
 
   Serial.begin(9600);
   Serial.println("Sistema de Sensores Conectados INICIADO.");
@@ -73,7 +92,7 @@ void setup() {
   tiempoUltimaActividad = millis();
 }
 
-// --- Revisar comandos de la Pi (SIN DELAYS) ---
+// --- Revisar comandos de la Pi (SIN DELAYS BLOQUEANTES) ---
 void leerComandosSerial() {
   if (Serial.available() > 0) {
     String comando = Serial.readStringUntil('\n');
@@ -123,6 +142,10 @@ void leerComandosSerial() {
       if (comando.startsWith("APROBADO:")) {
         String material = comando.substring(9);
         beep(300);
+        
+        // Opcional: Podrías poner la tira en VERDE aquí para indicar éxito
+        // colorFull(tiraled.Color(0, 255, 0)); 
+        
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Material:"); 
@@ -133,6 +156,10 @@ void leerComandosSerial() {
 
       } else if (comando == "RECHAZADO") {
         beep(50); delay(50); beep(50);
+        
+        // Opcional: Podrías poner la tira en ROJO aquí para indicar error
+        // colorFull(tiraled.Color(255, 0, 0));
+
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Material"); 
@@ -148,7 +175,9 @@ void leerComandosSerial() {
 // --- Ir al estado INACTIVO ---
 void finalizarSesion(String motivo) {
   Serial.println(motivo);
-  digitalWrite(LED_PIN, LOW);
+  
+  // APAGAR TIRA LED AL FINALIZAR
+  colorFull(tiraled.Color(0, 0, 0)); 
 
   if (motivo == "TERMINAR") {
     beep(150); delay(50); beep(100);
@@ -171,8 +200,6 @@ void finalizarSesion(String motivo) {
 void loop() {
   // 1. Siempre escuchar a la Pi
   leerComandosSerial();
-
-  // --- LÓGICA DE SCROLL ELIMINADA ---
 
   // 3. Lógica de Sesión Activa (Timeout y Botón)
   if (estadoActual == ESPERANDO_OBJETO ||
@@ -204,7 +231,10 @@ void loop() {
     case ESPERANDO_OBJETO:
       if (digitalRead(SENSOR_PIN) == LOW) {
         tiempoPrimerDeteccion = millis();
-        digitalWrite(LED_PIN, HIGH);
+        
+        // ENCENDER TIRA EN BLANCO PARA ILUMINAR EL OBJETO
+        colorFull(tiraled.Color(255, 255, 255)); 
+        
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -217,8 +247,11 @@ void loop() {
       break;
 
     case DETECTANDO_FOTO:
-      if (digitalRead(SENSOR_PIN) == HIGH) { // Objeto retirado
-        digitalWrite(LED_PIN, LOW);
+      if (digitalRead(SENSOR_PIN) == HIGH) { // Objeto retirado antes de tiempo
+        
+        // APAGAR TIRA LED SI QUITAN EL OBJETO
+        colorFull(tiraled.Color(0, 0, 0)); 
+        
         beep(50); delay(50); beep(50);
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -249,6 +282,10 @@ void loop() {
 
     case ESPERANDO_RETIRO:
       if (digitalRead(SENSOR_PIN) == HIGH) { // Objeto retirado
+        
+        // APAGAR TIRA LED CUANDO YA SE RETIRÓ EL OBJETO (Opcional, o apagar antes)
+        colorFull(tiraled.Color(0, 0, 0));
+        
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -263,7 +300,6 @@ void loop() {
     // --- Estados de Pausa (No Bloqueantes) ---
     
     case MOSTRANDO_ERROR_SESION:
-      // Espera 3 segundos (definido en TIEMPO_MENSAJE)
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -273,7 +309,6 @@ void loop() {
       break;
 
     case MOSTRANDO_BIENVENIDA_1:
-      // Espera 3 segundos (definido en TIEMPO_MENSAJE)
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -286,8 +321,11 @@ void loop() {
 
     case MOSTRANDO_APROBADO:
     case MOSTRANDO_RECHAZADO:
-      // Espera 3 segundos (definido en TIEMPO_MENSAJE)
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
+        
+        // Aseguramos que se apague la luz si estaba en verde/rojo
+        colorFull(tiraled.Color(0, 0, 0));
+        
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Retirando..."); 
@@ -297,11 +335,9 @@ void loop() {
       }
       break;
 
-    // --- Estados "Pasivos" ---
     case INACTIVO:
     case VALIDANDO_QR:
     case PROCESANDO_FOTO:
-      // No hacer nada, solo esperar comandos
       break;
   }
   delay(50); // Pequeño delay general
