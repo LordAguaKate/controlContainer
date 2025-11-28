@@ -1,333 +1,195 @@
 # controlContainer
 
-Sistema inteligente de reciclaje automatizado con reconocimiento de materiales mediante visión artificial y validación de usuarios por código QR.
+Sistema de reciclaje inteligente que integra Raspberry Pi, Arduino y una API para:
+- Validar usuarios con QR.
+- Detectar presencia y flujo del proceso con una máquina de estados en Arduino (LCD, buzzer y tira LED NeoPixel).
+- Capturar foto del objeto con PiCamera2.
+- Enviar la imagen a una API con IA para clasificar el material.
+- Reportar niveles de llenado (3 sensores ultrasónicos) al finalizar la sesión.
 
-## 📋 Descripción
+## 📦 Características
 
-**controlContainer** es un sistema IoT completo que combina hardware (Arduino Nano, Raspberry Pi, sensores) y software (Python, API REST) para crear un contenedor de reciclaje inteligente. El sistema valida usuarios mediante códigos QR, detecta objetos con sensores de proximidad, captura imágenes con una cámara, y utiliza inteligencia artificial para clasificar materiales reciclables en tiempo real.
+- ✅ Validación de usuarios por token QR contra API.
+- 🔄 Flujo guiado con máquina de estados (LCD, buzzer y LED).
+- 📸 Captura con autoenfoque (Picamera2).
+- 🤖 Clasificación vía API (IA) y ruteo a motores opcionales según material.
+- 📡 Reporte de niveles de llenado con 3 ultrasonidos (aluminio, plástico y no reciclable).
+- 🧩 Modular: `photos`, `api_client`, `qr_handler`.
 
-### Características principales
+## 🏗️ Arquitectura
 
-- ✅ **Validación de usuarios** mediante códigos QR escaneados
-- 🔍 **Detección automática** de objetos con sensor infrarrojo E18-D80NK
-- 📸 **Captura de imágenes** con Raspberry Pi Camera Module (autoenfoque)
-- 🤖 **Clasificación inteligente** de materiales mediante API con IA
-- 🔄 **Sesiones de reciclaje** con múltiples objetos por usuario
-- 📊 **Registro de historial** de reciclaje por usuario
-- 🚦 **Máquina de estados** robusta en Arduino para control de flujo
+Raspberry Pi (Python) orquesta el flujo y se comunica por serial con:
+- Arduino Nano Sensores (LCD, buzzer, IR, ultrasónicos) — obligatorio.
+- Arduino Nano Motores (banda/servos) — opcional.
+Además, se comunica con:
+- Lector QR (serial).
+- API Backend (Laravel u otro) para validar y clasificar.
 
-## 🏗️ Arquitectura del Sistema
-
-```
-┌─────────────────┐
-│  Lector QR      │──┐
-└─────────────────┘  │
-                     │
-┌─────────────────┐  │    ┌──────────────────┐
-│ Sensor IR       │──┼───→│  Raspberry Pi 4  │
-│ (Arduino Nano)  │  │    │  (Python)        │
-└─────────────────┘  │    └──────────────────┘
-                     │            │
-┌─────────────────┐  │            │
-│ Pi Camera       │──┘            │
-└─────────────────┘               │
-                                  ↓
-                         ┌─────────────────┐
-                         │   API Laravel   │
-                         │   (Backend)     │
-                         └─────────────────┘
-```
-
-## 🔧 Componentes de Hardware
-
-### Requeridos
-- **Raspberry Pi 4** (o superior) con Raspberry Pi OS
-- **Arduino Nano** (o compatible)
-- **Raspberry Pi Camera Module** (con soporte de autoenfoque)
-- **Sensor infrarrojo E18-D80NK** (detección de proximidad)
-- **Lector de código QR** con salida serial (USB/UART)
-- **Botón pulsador** (para finalizar sesión)
-- **LED** (indicador de estado, opcional)
-- Cables de conexión y fuente de alimentación
-
-### Conexiones Arduino Nano
-
-```cpp
-Pin 4  → Sensor infrarrojo E18-D80NK (señal)
-Pin 3  → Botón pulsador (con pull-down)
-Pin 13 → LED indicador (integrado)
-```
-
-## 💻 Estructura del Proyecto
+## 📁 Estructura
 
 ```
 controlContainer/
-│
-├── main.py                          # Programa principal (orquestador)
-├── README.md                        # Este archivo
-│
+├── main.py                        # Orquestador principal
+├── README.md
 ├── src/
-│   ├── api_client.py               # Cliente para enviar imágenes a la API
-│   ├── qr_handler.py               # Validación de usuarios por QR
-│   ├── photos.py                   # Captura de fotos con Pi Camera
-│   └── config.py                   # Configuración (ID contenedor, etc.)
-│
-├── ArduinoNano/
-│   └── SensorProximidad.ino        # Código para Arduino Nano
-│
-└── images/                          # Carpeta de imágenes capturadas
+│   ├── api_client.py             # Envío imagen + actualización de capacidad
+│   ├── qr_handler.py             # Lectura/validación de token QR
+│   ├── photos.py                 # Cámara (Picamera2)
+│   └── config.py                 # Configuración local (CONTAINER_ID)
+└── ArduinoNano/
+    └── SensoresConect.ino        # Código Arduino (LCD, buzzer, IR, ultrasónicos, LED)
 ```
 
-## 🚀 Instalación y Configuración
+## 🔧 Requisitos e instalación
 
-### 1. Configuración de Raspberry Pi
+- Raspberry Pi OS actualizado
+- Python 3
+- Cámara habilitada (libcamera/Picamera2)
+- Acceso a puertos serial
 
-#### Instalar dependencias del sistema
-
+Dependencias del sistema:
 ```bash
 sudo apt update
 sudo apt install -y python3-pip python3-picamera2 python3-serial
 ```
 
-#### Instalar dependencias de Python
-
+Dependencias Python:
 ```bash
 pip3 install requests pyserial picamera2
 ```
 
-#### Habilitar la cámara
-
+Habilitar cámara:
 ```bash
 sudo raspi-config
-# Navegar a: Interface Options → Camera → Enable
+# Interface Options → Camera → Enable
 ```
 
-### 2. Configuración de Arduino Nano
+## ⚙️ Configuración
 
-1. Abrir `ArduinoNano/SensorProximidad.ino` en el Arduino IDE
-2. Conectar el Arduino Nano por USB
-3. Seleccionar la placa: **Tools → Board → Arduino Nano**
-4. Seleccionar el puerto correcto: **Tools → Port → /dev/ttyUSB0** (o el correspondiente)
-5. Cargar el sketch: **Sketch → Upload**
-
-### 3. Configuración del Proyecto
-
-#### Identificar puertos serie
-
-En la Raspberry Pi, ejecutar:
-
-```bash
-ls /dev/tty*
-```
-
-Identificar los puertos del Arduino y del lector QR (generalmente `/dev/ttyACM0`, `/dev/ttyUSB0`, etc.)
-
-#### Editar configuración en `main.py`
-
+- Puertos en `main.py` (se permiten comodines):
 ```python
-ARDUINO_PORT = '/dev/ttyACM0'      # Puerto del Arduino Nano
-QR_SCANNER_PORT = '/dev/ttyUSB0'   # Puerto del lector QR
+ARDUINO_SENSORES_PORT = '/dev/ttyUSB*'
+ARDUINO_MOTORES_PORT  = '/dev/ttyUSB*'  
+QR_SCANNER_PORT       = '/dev/ttyACM*'
 BAUD_RATE = 9600
 ```
 
-#### Configurar archivo `src/config.py`
-
-Crear el archivo `src/config.py` (si no existe):
-
+- ID de contenedor en `src/config.py`:
 ```python
-# ID único del contenedor (debe estar registrado en la API)
-CONTAINER_ID = 1  # Cambiar según tu configuración
+CONTAINER_ID = 1  # ajusta a tu instalación
 ```
 
-#### Configurar URLs de API
-
-**En `src/api_client.py`:**
-
+- Endpoints en `src/api_client.py`:
 ```python
-API_URL = "https://tu-dominio.com/api/scans"  # Endpoint para enviar imágenes
+SCAN_URL = "https://tu-api.com/api/scans"                 # POST imagen + ids
+UPDATE_CAPACITY_URL = "https://tu-api.com/api/capacity"   # POST niveles
 ```
 
-**En `src/qr_handler.py`:**
-
+- Endpoint de validación en `src/qr_handler.py`:
 ```python
-API_URL = "https://tu-dominio.com/api/validate-user"  # Endpoint de validación
+API_URL = "https://tu-api.com/api/validate-user"
 ```
 
-## 🎮 Uso del Sistema
+- Arduino: abre y sube `ArduinoNano/SensoresConect.ino` con el Arduino IDE a tu Nano.
 
-### Iniciar el sistema
+## ▶️ Ejecución
 
 ```bash
 cd /ruta/a/controlContainer
 python3 main.py
 ```
 
-### Flujo de operación
+Flujo:
+1) Usuario escanea QR → validación con API.
+2) Arduino guía en LCD. Cuando detecta objeto 2s → envía `FOTO`.
+3) Pi captura, envía a API y recibe resultado.
+4) Se informa a Arduino: aprobado/rechazado. Motores se activan según material.
+5) Al terminar sesión → se consultan ultrasonidos y se reportan a la API.
 
-1. **FASE 1: Validación de usuario**
-   - El sistema espera que un usuario escanee su código QR
-   - El token se valida contra la API
-   - Si es válido, se activa el Arduino y comienza la sesión
+## 🔌 Protocolo Serial
 
-2. **FASE 2: Colocación de material**
-   - El usuario coloca un objeto frente al sensor infrarrojo
-   - El sensor detecta el objeto durante 2 segundos continuos
+- Raspberry Pi → Arduino (sensores):
+  - `VALIDANDO`
+  - `ERROR_SESION`
+  - `SESION_OK:<nombre>`
+  - `APROBADO:<material_simple>`
+  - `RECHAZADO`
+  - `LEER_ULTRASONICOS`
 
-3. **FASE 3: Captura y análisis**
-   - La Raspberry Pi captura una foto del objeto
-   - La imagen se envía a la API junto con el ID del usuario y contenedor
-   - La API responde con la clasificación del material (reciclable/no reciclable)
+- Arduino (sensores) → Raspberry Pi:
+  - `FOTO`
+  - `TERMINAR`
+  - `NIVELES:<alu>,<basura>,<pla>`  (valores en cm; `-1` si error)
+  - `Info: ...` (logs informativos)
 
-4. **FASE 4: Decisión del usuario**
-   - Si el material es reciclable, la cinta (aun no implementada) se activa y deposita el objeto
-   - Después de retirar el objeto, en un lapso de 3 segundos el usuario puede decidir:
-     - **Presionar el botón** → Finalizar sesión
-     - **Colocar otro objeto** → Continuar reciclando
+- Raspberry Pi → Arduino (motores, opcional):
+  - `ALUMINIO`
+  - `PLASTICO`
+  - `OTRO`
 
-5. **FASE 5: Finalización**
-   - Al presionar el botón, se cierra la sesión del usuario
-   - El sistema vuelve a la FASE 1 para el siguiente usuario
+Notas:
+- El material que se envía en `APROBADO:` se “normaliza” (sin acentos) desde la respuesta de API para facilitar parsing.
+- Los niveles se solicitan explícitamente al finalizar sesión con `LEER_ULTRASONICOS`.
 
-## 📡 Comunicación Serial
+## 🌐 API
 
-### Comandos Raspberry Pi → Arduino
+- Validación de usuario
+  - POST `/api/validate-user`
+  - Headers: `Authorization: Bearer {token_qr}`
+  - Respuesta 200:
+    ```json
+    { "success": true, "data": { "user": { "id": 123, "name": "Juan Pérez" } } }
+    ```
 
-| Comando | Descripción |
-|---------|-------------|
-| `START\n` | Activa el Arduino para comenzar a detectar objetos |
-| `PAUSE\n` | Pausa el Arduino (al finalizar sesión o cerrar programa) |
+- Envío de imagen
+  - POST `/api/scans` (multipart/form-data)
+  - Campos: `image` (jpeg), `container_id` (int), `user_id` (int)
+  - Ejemplo 200/422:
+    ```json
+    { "success": true, "data": { "reciclable": true, "tipo_espanol": "Plástico", "confianza": "95%" } }
+    ```
 
-### Mensajes Arduino → Raspberry Pi
-
-| Mensaje | Descripción |
-|---------|-------------|
-| `FOTO` | Objeto detectado durante 2 segundos, solicita captura de foto |
-| `TERMINAR` | Usuario presionó el botón para finalizar sesión |
-| `LISTO_SIGUIENTE` | Usuario no presionó el botón, listo para siguiente objeto |
-| `Info: ...` | Mensajes de estado del Arduino (informativos) |
-
-## 🔌 API REST
-
-### Endpoint: Validación de Usuario
-
-**POST** `/api/validate-user`
-
-**Headers:**
-```
-Authorization: Bearer {token_qr}
-```
-
-**Respuesta exitosa (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "id": 123,
-      "name": "Juan Pérez",
-      "email": "juan@example.com"
+- Actualización de capacidad (niveles)
+  - POST `/api/capacity` (JSON)
+  - Cuerpo:
+    ```json
+    {
+      "capacity": {
+        "sensor1": 12,   // plástico
+        "sensor2": 15,   // no reciclable
+        "sensor3": 8     // aluminio
+      }
     }
-  }
-}
-```
+    ```
 
-### Endpoint: Envío de Imagen
+## 📸 Cámara
 
-**POST** `/api/scans`
+- `src/photos.py` usa Picamera2 con autoenfoque continuo.
+- Captura por defecto a 1280x720.
+- Imagen se guarda en `images/captura_YYYY-MM-DD_HH-MM-SS.jpg`.
 
-**Parámetros (multipart/form-data):**
-- `image`: Archivo de imagen (JPEG)
-- `container_id`: ID del contenedor (integer)
-- `user_id`: ID del usuario validado (integer)
+## 🧪 Solución de problemas
 
-**Respuesta exitosa (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "reciclable": true,
-    "tipo_espanol": "Plástico",
-    "confianza": "95%"
-  }
-}
-```
+- Cámara no inicializa:
+  - Verifica `raspi-config`, conexión y reinicia.
+- Serial no conecta:
+  - Verifica puertos con `ls /dev/tty*`.
+  - Agrega tu usuario a `dialout`: `sudo usermod -a -G dialout $USER` (cierra sesión).
+- API no responde:
+  - Revisa `SCAN_URL`, `UPDATE_CAPACITY_URL` y `API_URL`.
+  - Valida conectividad y logs del backend.
+- Lectura de niveles:
+  - Si recibes `-1`, puede ser timeout del sensor ultrasónico. Revisa cableado y alimentación.
 
-**Respuesta de error (422):**
-```json
-{
-  "success": false,
-  "errors": "Material no reconocido"
-}
-```
+## ⚠️ Notas
 
-## 🛠️ Solución de Problemas
-
-### Error: "No se pudo inicializar la cámara"
-
-- Verificar que la cámara esté habilitada en `raspi-config`
-- Comprobar la conexión física del cable de la cámara
-- Reiniciar la Raspberry Pi
-
-### Error: "Error al conectar con un puerto serie"
-
-- Verificar los puertos con `ls /dev/tty*`
-- Comprobar permisos: `sudo usermod -a -G dialout $USER` (luego reiniciar sesión)
-- Verificar que los dispositivos estén conectados
-
-### El sensor no detecta objetos
-
-- Verificar la conexión del sensor al Arduino (pin 4)
-- Comprobar la alimentación del sensor (5V)
-- Ajustar la distancia de detección del sensor (potenciómetro)
-
-### La API no responde
-
-- Verificar la URL configurada en `api_client.py` y `qr_handler.py`
-- Comprobar la conexión a Internet
-- Revisar los logs del servidor API
-
-## 📝 Notas Técnicas
-
-### Máquina de Estados del Arduino
-
-El Arduino implementa una máquina de estados robusta:
-
-1. **ESPERANDO_OBJETO**: Estado inicial, esperando detección
-2. **DETECTANDO_FOTO**: Objeto presente, contando 2 segundos
-3. **ESPERANDO_RETIRO**: Foto solicitada, esperando que se retire el objeto
-4. **VENTANA_DECISION**: Despues de 3 segundos el usuario decide continuar o terminar
-
-### Tiempos Configurables
-
-En `ArduinoNano/SensorProximidad.ino`:
-
-```cpp
-const long tiempoDeteccionRequerido = 2000; // Tiempo para confirmar objeto (ms)
-const long tiempoConfirmacionRetiro = 3000; // Tiempo de ventana de decisión (ms)
-```
-
-### Configuración de Cámara
-
-En `src/photos.py`, la resolución de captura es:
-
-```python
-capture_config = picam2.create_still_configuration(main={"size": (1280, 720)})
-```
-
-Puedes ajustar la resolución según tus necesidades.
-
-
+- En `src/api_client.py`, la función `send_image_to_server` usa `SCAN_URL`. Asegúrate de definirla (no usar `API_URL` para el escaneo).
+- El Arduino de motores es opcional. Si no está, el sistema opera en modo visual.
 
 ## 📄 Licencia
 
-Este proyecto es de código abierto. Consulta el archivo LICENSE para más detalles.
+Consulta LICENSE.
 
 ## 👥 Autores
 
-- **Equipo 3** - Desarrolladores iniciales
-
-## 🙏 Agradecimientos
-
-- Comunidad de Raspberry Pi por la documentación de Picamera2
-- Arduino por el ecosistema de hardware abierto
-- Contribuidores de las librerías utilizadas (pyserial, requests, etc.)
+Equipo 3 y contribuidores.
