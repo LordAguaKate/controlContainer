@@ -1,21 +1,31 @@
 // --- LIBRERÍAS ---
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include <Adafruit_NeoPixel.h> // LIBRERÍA AGREGADA
+#include <Adafruit_NeoPixel.h> 
 
 // --- INICIALIZACIÓN DE LCD ---
 LiquidCrystal_I2C lcd(0x27, 16, 2); // 0x27 o 0x3F
 
 // --- CONFIGURACIÓN DE TIRA LED ---
-#define PIN_LED_TIRA 13    // Pin de datos para la tira (Antes era LED_PIN)
-#define NUM_LEDS 30        // Cantidad de LEDs en tu tira
-// Inicializamos el objeto de la tira
+#define PIN_LED_TIRA 13    
+#define NUM_LEDS 30        
 Adafruit_NeoPixel tiraled = Adafruit_NeoPixel(NUM_LEDS, PIN_LED_TIRA, NEO_GRB + NEO_KHZ800);
 
-// --- OTROS PINES ---
+// --- OTROS PINES EXISTENTES ---
 const int SENSOR_PIN = 4;
 const int botonPin = 3;
 const int BUZZER_PIN = 5;
+
+// --- NUEVOS PINES: ULTRASONICOS ---
+// 1. Aluminio
+const int TRIG_ALU = 7;
+const int ECHO_ALU = 6;
+// 2. No Reciclable (Basura)
+const int TRIG_BASURA = 9;
+const int ECHO_BASURA = 8;
+// 3. Plástico
+const int TRIG_PLA = 11;
+const int ECHO_PLA = 10;
 
 // --- CONFIGURACIÓN DE TIEMPOS ---
 const long tiempoDeteccionRequerido = 2000;
@@ -43,7 +53,6 @@ unsigned long tiempoUltimaActividad = 0;
 unsigned long tiempoInicioPausa = 0;
 
 // --- FUNCIÓN AUXILIAR PARA LA TIRA LED ---
-// Llena toda la tira con un color especifico
 void colorFull(uint32_t color) {
   for (int i = 0; i < NUM_LEDS; i++) {
     tiraled.setPixelColor(i, color);
@@ -58,28 +67,47 @@ void beep(int duracion) {
   digitalWrite(BUZZER_PIN, LOW);
 }
 
-// --- FUNCIÓN PARA CAMBIAR ESTADO (Reinicia timers) ---
+// --- NUEVA FUNCIÓN AUXILIAR PARA ULTRASONICOS ---
+long obtenerDistancia(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  // Timeout de 30ms para no bloquear el sistema principal si falla un sensor
+  long duracion = pulseIn(echoPin, HIGH, 30000); 
+  
+  if (duracion == 0) return -1; // Error
+  return duracion * 0.034 / 2;
+}
+
+// --- FUNCIÓN PARA CAMBIAR ESTADO ---
 void cambiarEstado(Estado nuevoEstado) {
   estadoActual = nuevoEstado;
-  tiempoInicioPausa = millis(); // Para los estados de pausatambien
-  tiempoUltimaActividad = millis(); // Reinicia el timeout de inactividad
+  tiempoInicioPausa = millis(); 
+  tiempoUltimaActividad = millis(); 
 }
 
 void setup() {
+  // Pines existentes
   pinMode(SENSOR_PIN, INPUT);
   pinMode(botonPin, INPUT);
-  // pinMode(LED_PIN, OUTPUT); -> YA NO ES NECESARIO, LO MANEJA LA LIBRERÍA NEOPIXEL
   pinMode(BUZZER_PIN, OUTPUT);
-
   digitalWrite(BUZZER_PIN, LOW);
+
+  // --- CONFIGURAR PINES ULTRASONICOS ---
+  pinMode(TRIG_ALU, OUTPUT); pinMode(ECHO_ALU, INPUT);
+  pinMode(TRIG_BASURA, OUTPUT); pinMode(ECHO_BASURA, INPUT);
+  pinMode(TRIG_PLA, OUTPUT); pinMode(ECHO_PLA, INPUT);
 
   // Inicializar Tira LED
   tiraled.begin();
-  tiraled.show(); // Apaga todos los LEDs inicialmente
-  colorFull(tiraled.Color(0, 0, 0)); // Aseguramos que inicie apagada
+  tiraled.show(); 
+  colorFull(tiraled.Color(0, 0, 0)); 
 
   Serial.begin(9600);
-  Serial.println("Sistema de Sensores Conectados INICIADO.");
+  Serial.println("Sistema Sensores + Ultrasonicos INICIADO.");
 
   lcd.init();
   lcd.backlight();
@@ -92,80 +120,94 @@ void setup() {
   tiempoUltimaActividad = millis();
 }
 
-// --- Revisar comandos de la Pi (SIN DELAYS BLOQUEANTES) ---
+// --- LEER COMANDOS DE LA PI ---
 void leerComandosSerial() {
   if (Serial.available() > 0) {
     String comando = Serial.readStringUntil('\n');
     comando.trim();
 
-    // 1. Pi detectó un QR y está validando
+    // --- COMANDO NUEVO: LEER NIVELES ---
+    if (comando == "LEER_ULTRASONICOS") {
+      // Leemos los 3 sensores
+      long distAlu = obtenerDistancia(TRIG_ALU, ECHO_ALU);
+      delay(10); // Pequeña pausa técnica
+      long distBasura = obtenerDistancia(TRIG_BASURA, ECHO_BASURA);
+      delay(10);
+      long distPla = obtenerDistancia(TRIG_PLA, ECHO_PLA);
+
+      // Enviamos respuesta a la Pi: "NIVELES:val1,val2,val3"
+      Serial.print("NIVELES:");
+      Serial.print(distAlu);
+      Serial.print(",");
+      Serial.print(distBasura);
+      Serial.print(",");
+      Serial.println(distPla);
+      
+      return; // Salimos para no procesar lógica de estados innecesariamente
+    }
+
+    // --- COMANDOS EXISTENTES DE FLUJO ---
+    
+    // 1. Pi detectó un QR
     if (comando == "VALIDANDO" && estadoActual == INACTIVO) {
-      Serial.println("Info: Pi esta validando el QR. Esperando resultado...");
+      Serial.println("Info: Pi esta validando el QR...");
       beep(50);
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print("Iniciando sesion"); 
+      lcd.print("Identificando..."); // lcd.print("Iniciando sesion"); 
       lcd.setCursor(0, 1);
       lcd.print("Por favor espere"); 
       cambiarEstado(VALIDANDO_QR);
     }
     
-    // 2. Pi informa que la sesión falló
+    // 2. Error de Sesión
     else if (comando == "ERROR_SESION" && estadoActual == VALIDANDO_QR) {
-      Serial.println("Info: Pi reporta error de sesion.");
+      Serial.println("Info: Error de sesion.");
       beep(50); delay(50); beep(50);
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print("Error al iniciar"); 
+      lcd.print("No identificado"); // lcd.print("Error al iniciar"); 
       lcd.setCursor(0, 1);
       lcd.print("Intente de nuevo"); 
       cambiarEstado(MOSTRANDO_ERROR_SESION);
     }
 
-    // 3. Pi informa que la sesión fue exitosa
+    // 3. Sesión Exitosa
     else if (comando.startsWith("SESION_OK:") && estadoActual == VALIDANDO_QR) {
       String name = comando.substring(10);
-      Serial.println("Info: Pi reporta sesion OK.");
+      Serial.println("Info: Sesion OK.");
       
       beep(150);
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print("Sesion correcta"); 
+      lcd.print("Bienvenid@"); // lcd.print("Sesion correcta"); 
       lcd.setCursor(0, 1);
       lcd.print(name); 
       
       cambiarEstado(MOSTRANDO_BIENVENIDA_1);
     }
 
-    // 4. Lógica de respuesta de API (para la foto)
+    // 4. Resultado de Foto
     if (estadoActual == PROCESANDO_FOTO) {
       if (comando.startsWith("APROBADO:")) {
         String material = comando.substring(9);
         beep(300);
-        
-        // Opcional: Podrías poner la tira en VERDE aquí para indicar éxito
-        // colorFull(tiraled.Color(0, 255, 0)); 
-        
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Material:"); 
         lcd.setCursor(0, 1);
         lcd.print(material); 
-        Serial.println("Info: Pi aprobo el material. Esperando retiro.");
+        Serial.println("Info: Aprobado. Esperando retiro.");
         cambiarEstado(MOSTRANDO_APROBADO);
 
       } else if (comando == "RECHAZADO") {
         beep(50); delay(50); beep(50);
-        
-        // Opcional: Podrías poner la tira en ROJO aquí para indicar error
-        // colorFull(tiraled.Color(255, 0, 0));
-
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Material"); 
+        lcd.print("El material es"); // lcd.print("Material"); 
         lcd.setCursor(0, 1);
-        lcd.print("No Reciclable"); 
-        Serial.println("Info: Pi rechazo el material. Esperando retiro.");
+        lcd.print("No valido"); // lcd.print("No Reciclable"); 
+        Serial.println("Info: Rechazado. Esperando retiro.");
         cambiarEstado(MOSTRANDO_RECHAZADO);
       }
     }
@@ -175,15 +217,13 @@ void leerComandosSerial() {
 // --- Ir al estado INACTIVO ---
 void finalizarSesion(String motivo) {
   Serial.println(motivo);
-  
-  // APAGAR TIRA LED AL FINALIZAR
   colorFull(tiraled.Color(0, 0, 0)); 
 
   if (motivo == "TERMINAR") {
     beep(150); delay(50); beep(100);
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Sesion terminada"); 
+    lcd.print("Finalizando"); // lcd.print("Sesion terminada"); 
     lcd.setCursor(0, 1);
     lcd.print("!Gracias!"); 
     delay(2000); 
@@ -196,9 +236,8 @@ void finalizarSesion(String motivo) {
   tiempoUltimaActividad = millis();
 }
 
-
 void loop() {
-  // 1. Siempre escuchar a la Pi
+  // 1. Escuchar comandos (Incluyendo LEER_ULTRASONICOS)
   leerComandosSerial();
 
   // 3. Lógica de Sesión Activa (Timeout y Botón)
@@ -209,56 +248,45 @@ void loop() {
       bool objetoDetectado = (digitalRead(SENSOR_PIN) == LOW);
       bool botonPresionado = (digitalRead(botonPin) == HIGH);
 
-      // 3a. Regla de Botón
       if (botonPresionado) {
           while(digitalRead(botonPin) == HIGH) { delay(50); }
           finalizarSesion("TERMINAR");
           return;
       }
 
-      // 3b. Regla de Timeout
       if (millis() - tiempoUltimaActividad > tiempoInactividadSesion) {
-          Serial.println("Info: Timeout de inactividad.");
+          Serial.println("Info: Timeout.");
           finalizarSesion("TERMINAR");
           return;
       }
   }
 
-  // 4. Máquina de Estados (Incluye estados de pausa)
+  // 4. Máquina de Estados
   switch (estadoActual) {
 
-    // --- Estados de Lógica Principal ---
     case ESPERANDO_OBJETO:
       if (digitalRead(SENSOR_PIN) == LOW) {
         tiempoPrimerDeteccion = millis();
-        
-        // ENCENDER TIRA EN BLANCO PARA ILUMINAR EL OBJETO
         colorFull(tiraled.Color(255, 255, 255)); 
-        
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Objeto detectado"); 
         lcd.setCursor(0, 1);
         lcd.print("Espere 2 seg..."); 
-        Serial.println("Info: Objeto detectado, iniciando temporizador de foto...");
+        Serial.println("Info: Detectado, iniciando timer...");
         cambiarEstado(DETECTANDO_FOTO);
       }
       break;
 
     case DETECTANDO_FOTO:
-      if (digitalRead(SENSOR_PIN) == HIGH) { // Objeto retirado antes de tiempo
-        
-        // APAGAR TIRA LED SI QUITAN EL OBJETO
+      if (digitalRead(SENSOR_PIN) == HIGH) { 
         colorFull(tiraled.Color(0, 0, 0)); 
-        
         beep(50); delay(50); beep(50);
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Objeto retirado"); 
-        lcd.setCursor(0, 1);
-        lcd.print("Reiniciando..."); 
-        Serial.println("Info: Objeto retirado prematuramente. Reiniciando.");
+        Serial.println("Info: Retirado antes de tiempo.");
         delay(1500); 
         lcd.clear();
         lcd.setCursor(0, 0); 
@@ -268,77 +296,57 @@ void loop() {
         cambiarEstado(ESPERANDO_OBJETO);
         
       } else if (millis() - tiempoPrimerDeteccion >= tiempoDeteccionRequerido) {
-        Serial.println("FOTO");
+        Serial.println("FOTO"); // Pi recibe esto y toma foto
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Procesando..."); 
         lcd.setCursor(0, 1);
         lcd.print("Espere por favor"); 
-        Serial.println("Info: Foto solicitada. Esperando respuesta de la API...");
         cambiarEstado(PROCESANDO_FOTO);
       }
       break;
 
     case ESPERANDO_RETIRO:
-      if (digitalRead(SENSOR_PIN) == HIGH) { // Objeto retirado
-        
-        // APAGAR TIRA LED CUANDO YA SE RETIRÓ EL OBJETO (Opcional, o apagar antes)
+      if (digitalRead(SENSOR_PIN) == HIGH) { 
         colorFull(tiraled.Color(0, 0, 0));
-        
         beep(100);
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Deposite otro o"); 
         lcd.setCursor(0, 1);
-        lcd.print("pulse p/ salir"); 
-        Serial.println("Info: Objeto retirado. Esperando siguiente objeto o fin de sesion...");
+        lcd.print("pulse el boton"); // lcd.print("pulse p/ salir"); 
+        Serial.println("Info: Retirado. Listo siguiente.");
         cambiarEstado(ESPERANDO_OBJETO);
       }
       break;
-
-    // --- Estados de Pausa (No Bloqueantes) ---
     
+    // --- Temporizadores de Mensajes ---
     case MOSTRANDO_ERROR_SESION:
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Escanee su QR...");
+        lcd.clear(); lcd.print("Escanee su QR...");
         cambiarEstado(INACTIVO);
       }
       break;
-
     case MOSTRANDO_BIENVENIDA_1:
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Deposite objeto"); 
-        lcd.setCursor(0, 1);
-        lcd.print("en contenedor"); 
+        lcd.clear(); lcd.print("Deposite objeto"); lcd.setCursor(0,1); lcd.print("en contenedor");
         cambiarEstado(ESPERANDO_OBJETO);
       }
       break;
-
     case MOSTRANDO_APROBADO:
     case MOSTRANDO_RECHAZADO:
       if (millis() - tiempoInicioPausa > TIEMPO_MENSAJE) {
-        
-        // Aseguramos que se apague la luz si estaba en verde/rojo
         colorFull(tiraled.Color(0, 0, 0));
-        
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Retirando..."); 
-        lcd.setCursor(0, 1);
-        lcd.print("Espere por favor"); 
+        lcd.clear(); lcd.print("Retirando..."); lcd.setCursor(0,1); lcd.print("Espere por favor");
         cambiarEstado(ESPERANDO_RETIRO);
       }
       break;
-
+      
     case INACTIVO:
     case VALIDANDO_QR:
     case PROCESANDO_FOTO:
       break;
   }
-  delay(50); // Pequeño delay general
+  delay(50); 
 }
