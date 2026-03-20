@@ -1,1 +1,18 @@
-src/config.py
+# .gitignore
+# Entornos virtuales
+venv/
+env/
+
+# Variables de entorno (¡CRITICO!)
+.env
+
+# Caché de Python
+__pycache__/
+*.pyc
+
+# Modelos locales (Opcional: Si son muy pesados, a veces no se suben a git)
+# models/*.keras
+# models/*.tflite
+
+# Fotos temporales
+data/images/*
