@@ -1,227 +1,154 @@
 # -*- coding: utf-8 -*-
 
-import serial
 import time
+import logging
 import unicodedata
-from src import photos, api_client, qr_handler
+import sys
 
-# --- CONFIGURACION DE PUERTOS ---
-# Verifica con 'ls /dev/tty*' cual es cual.
-# Tip: Arduino Uno/Nano suele ser ttyUSBx, Arduino Leonardo/Micro o Scanner ttyACMx
-ARDUINO_SENSORES_PORT = '/dev/ttyUSB*'  # Arduino Nano (Sensores/LCD)
-ARDUINO_MOTORES_PORT  = '/dev/ttyUSB*'  # Arduino Nano (Motores/Banda) -> NUEVO
-QR_SCANNER_PORT       = '/dev/ttyACM*'  # Lector QR
-BAUD_RATE = 9600
+# Importamos nuestras configuraciones globales
+from config import settings
 
-# --- FUNCION PARA QUITAR ACENTOS ---
-def strip_accents(s):
+# Importamos nuestras capas modulares
+from src.hardware.camera import setup_camera, take_photo
+from src.hardware.arduino import ArduinoManager
+from src.hardware.qr_scanner import QRScanner
+from src.services.auth_service import validate_token
+from src.ml.classifier import WasteClassifier
+
+# ============================================================================
+# ⚙️ CONFIGURACIÓN DEL LOGGING GLOBAL
+# ============================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler("contenedor_inteligente.log", encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("Main")
+
+def strip_accents(s: str) -> str:
+    """Elimina los acentos de un string para que el Arduino LCD lo lea sin basura."""
+    if not s:
+        return ""
     return ''.join(c for c in unicodedata.normalize('NFD', s)
                    if unicodedata.category(c) != 'Mn')
 
-# --- PROCESAR RESPUESTA API ---
-def process_api_response(response_data):
-    if response_data is None:
-        return False, "Error de IA"
-
-    if response_data.get('success') is True:
-        scan_data = response_data.get('data', {})
-        is_recyclable = scan_data.get('reciclable')
-        tipo_material = scan_data.get('tipo_espanol', 'Desconocido')
-        return is_recyclable, tipo_material
-    
-    error_msg = response_data.get('errors', "Error de IA")
-    if isinstance(error_msg, dict):
-        error_msg_list = next(iter(error_msg.values()), ["Error de IA"])
-        error_msg = error_msg_list[0] if error_msg_list else "Error de IA"
-        
-    return False, error_msg
-    
-# --- FUNCION PARA PROCESAR NIVELES ---
-def procesar_niveles(linea_datos):
-    """
-    1. Recibe string 'NIVELES:15,-1,12'
-    2. Aplica la simulacion del sensor danado.
-    3. Envia los datos a la API.
-    """
-    try:
-        datos = linea_datos.replace("NIVELES:", "").strip().split(",")
-        if len(datos) == 3:
-            alu_str, bas_str, pla_str = datos
-            
-            final_alu = 0
-            final_pla = 0
-            final_bas = 0
-
-            print(f"\n[ESTADO CONTENEDORES - FINAL DE SESION]")
-
-            try:
-                # 1. Convertir Aluminio y Plastico (Sensores Buenos)
-                final_alu = int(alu_str)
-                final_pla = int(pla_str)
-                final_bas = int(bas_str)
-                # 2. Calcular Basura (Sensor Danado -> Simulado)
-                # TODO: Cuando arregles el sensor, descomenta la linea real y comenta la simulada:
-                # final_bas = int(bas_str)  # <-- LINEA REAL
-                # final_bas = (final_alu + final_pla) // 2  # <-- LINEA SIMULADA
-
-                # 3. Mostrar en consola
-                print(f"   - Aluminio:      {final_alu} cm")
-                print(f"   - Plastico:      {final_pla} cm")
-                print(f"   - No Reciclable: {final_bas} cm")
-
-                # 4. ENVIAR A LA API (Solo al finalizar sesion)
-                api_client.update_container_capacity(final_alu, final_pla, final_bas)
-
-            except ValueError:
-                print("[Error] Valores no numericos recibidos de sensores.")
-            
-        else:
-            print(f"[ADVERTENCIA] Formato incorrecto: {linea_datos}")
-    except Exception as e:
-        print(f"[ERROR] Al procesar niveles: {e}")
-
-              
 def main():
-    """Funcion principal que orquesta todo el flujo."""
-    print("Iniciando sistema de control del contenedor...")
+    logger.info("=== INICIANDO SISTEMA DEL CONTENEDOR INTELIGENTE ===")
     
-    camera = photos.setup_camera()
+    # 1. Inicialización de Hardware e IA
+    camera = setup_camera()
     if not camera:
-        print("CRITICO: No se pudo inicializar la camara. Abortando.")
+        logger.critical("Abortando inicio: Sin cámara el sistema no puede operar.")
+        return
+
+    ia_classifier = WasteClassifier() # Aquí se carga el modelo .tflite o .keras
+
+    sensores = ArduinoManager(settings.ARDUINO_SENSORES_PORT, settings.BAUD_RATE, "Arduino Sensores")
+    motores = ArduinoManager(settings.ARDUINO_MOTORES_PORT, settings.BAUD_RATE, "Arduino Motores")
+    escaner_qr = QRScanner(settings.QR_SCANNER_PORT, settings.BAUD_RATE)
+
+    # Intentamos conectar
+    if not sensores.connect():
+        logger.critical("Abortando: El Arduino de Sensores/Pantalla es crítico y no conectó.")
         return
         
-    # Inicializamos las conexiones
-    arduino_sensores = None
-    arduino_motores = None
-    qr_ser = None
-   
+    motores.connect() # Si falla, ArduinoManager ya maneja el modo simulación
+    escaner_qr.connect()
 
     try:
-        # 1. Conexion Arduino SENSORES (Pantalla, Boton, Sensor presencia)
-        try:
-            arduino_sensores = serial.Serial(ARDUINO_SENSORES_PORT, BAUD_RATE, timeout=1)
-            time.sleep(2) # Reset de Arduino
-            arduino_sensores.flushInput()
-            print(f"[OK] Sensores conectados en {ARDUINO_SENSORES_PORT}")
-        except Exception as e:
-            print(f"[ERROR] Fallo al conectar Arduino Sensores: {e}")
-            return # Es critico, salimos
-
-        # 2. Conexion Arduino MOTORES (Banda, Servos)
-        try:
-            arduino_motores = serial.Serial(ARDUINO_MOTORES_PORT, BAUD_RATE, timeout=1)
-            time.sleep(2)
-            print(f"[OK] Motores conectados en {ARDUINO_MOTORES_PORT}")
-        except Exception as e:
-            print(f"[WARNING] No se detecto Arduino de Motores ({e}). El sistema funcionara solo en modo visual.")
-
-        # 3. Conexion Lector QR
-        try:
-            qr_ser = serial.Serial(QR_SCANNER_PORT, BAUD_RATE, timeout=1)
-            print(f"[OK] Lector QR conectado en {QR_SCANNER_PORT}")
-        except Exception as e:
-             print(f"[ERROR] Fallo al conectar Lector QR: {e}")
-             return
-
-       # --- BUCLE PRINCIPAL ---
+        # ============================================================================
+        # 🔄 BUCLE PRINCIPAL DEL SISTEMA (MÁQUINA DE ESTADOS)
+        # ============================================================================
         while True:
-            print("\n=======================================================")
-            print("--- FASE 1: Esperando usuario (QR) ---")
-            
-            qr_ser.flushInput()
-            validated_user_id = None
+            logger.info("--- FASE 1: ESPERANDO USUARIO (QR) ---")
+            escaner_qr.flush()
             token = None
             
-            while token is None:
-                
-
-                # --- B. LEER RESPUESTAS DEL ARDUINO (NIVELES) ---
-                if arduino_sensores and arduino_sensores.in_waiting > 0:
-                    try:
-                        linea = arduino_sensores.readline().decode('utf-8').strip()
-                        if linea.startswith("NIVELES:"): 
-                            procesar_niveles(linea) # <--- AQUI SE PROCESA Y ENVIA A LA API
-                        elif "Info:" in linea: 
-                            print(f"[Log] {linea}")
-                    except: pass
-                        
-                # C. LEER QR
-                token = qr_handler.read_token(qr_ser)
+            # Esperar lectura de QR
+            while not token:
+                token = escaner_qr.read_token()
                 time.sleep(0.2)
             
-            print(f"Token leido. Validando...")
-            arduino_sensores.write(b"VALIDANDO\n")
+            logger.info("Token detectado. Validando...")
+            sensores.send_command("VALIDANDO")
             
-            user_id, user_name = qr_handler.validate_token(token)
+            user_id, user_name = validate_token(token)
 
-            if user_id:
-                print(f"-> Usuario valido: {user_name}")
-                validated_user_id = user_id
-                first_name_simple = strip_accents(user_name.split()[0])
-                arduino_sensores.write(f"SESION_OK:{first_name_simple}\n".encode('utf-8'))
-            else:
-                print("-> Usuario invalido.")
-                arduino_sensores.write(b"ERROR_SESION\n")
-                time.sleep(0.5)
-                continue 
+            if not user_id:
+                logger.warning("Usuario inválido o no reconocido.")
+                sensores.send_command("ERROR_SESION")
+                time.sleep(1)
+                continue # Regresa a esperar otro QR
                 
-            # --- FASE DE RECICLAJE ---
+            first_name_simple = strip_accents(user_name.split()[0])
+            sensores.send_command(f"SESION_OK:{first_name_simple}")
+            
+            # --- FASE 2: SESIÓN DE RECICLAJE ACTIVA ---
+            logger.info(f"--- FASE 2: SESIÓN ACTIVA PARA {user_name} ---")
             session_active = True
+            
             while session_active:
-                # (ELIMINADO CHECK PERIODICO DE ULTRASONICOS)
+                arduino_msg = sensores.read_line()
+                if not arduino_msg:
+                    time.sleep(0.1)
+                    continue
 
-                # B. LEER ARDUINO
-                if arduino_sensores.in_waiting > 0:
-                    try:
-                        msg = arduino_sensores.readline().decode('utf-8').strip()
-                        if not msg: continue
-
-                        if "Info:" in msg: print(f"[Sens] {msg}")
-                        elif msg.startswith("NIVELES:"): 
-                            procesar_niveles(msg)
+                if "Info:" in arduino_msg:
+                    logger.info(f"[Sensores] {arduino_msg}")
+                
+                # --- EVENTO: EL USUARIO INGRESÓ UN OBJETO ---
+                elif arduino_msg == "FOTO":
+                    logger.info("Objeto detectado. Capturando y procesando...")
+                    filepath = take_photo(camera)
+                
+                    if filepath:
+                        # 🧠 INFERENCIA LOCAL DE IA
+                        predicted_class, confidence = ia_classifier.predict(filepath)
+                        logger.info(f"IA Predice: {predicted_class} (Confianza: {confidence:.2f})")
                         
-                        elif msg == "FOTO":
-                            print("\n--- FOTO ---")
-                            path = photos.take_photo(camera)
-                            if path:
-                                res = api_client.send_image_to_server(path, validated_user_id)
-                                ok, tipo = process_api_response(res)
-                                tipo_simple = strip_accents(tipo)
+                        is_recyclable = ia_classifier.is_recyclable(predicted_class, confidence)
+                        clase_limpia = strip_accents(predicted_class).upper()
 
-                                if ok:
-                                    print(f"-> APROBADO: {tipo_simple}")
-                                    arduino_sensores.write(f"APROBADO:{tipo_simple}\n".encode())
-                                    if arduino_motores:
-                                        m = tipo_simple.lower()
-                                        if "aluminio" in m or "lata" in m: arduino_motores.write(b"ALUMINIO\n")
-                                        elif "plastico" in m or "botella" in m: arduino_motores.write(b"PLASTICO\n")
-                                        else: arduino_motores.write(b"OTRO\n")
-                                else:
-                                    print(f"-> RECHAZADO: {tipo_simple}")
-                                    arduino_sensores.write(b"RECHAZADO\n")
-                                    if arduino_motores: arduino_motores.write(b"OTRO\n")
+                        if is_recyclable:
+                            logger.info(f"-> APROBADO: {clase_limpia}")
+                            sensores.send_command(f"APROBADO:{clase_limpia}")
+                            
+                            # Lógica de motores basada en la predicción
+                            if "ALUMINIO" in clase_limpia:
+                                motores.send_command("ALUMINIO")
+                            elif "PLASTICO" in clase_limpia:
+                                motores.send_command("PLASTICO")
                             else:
-                                arduino_sensores.write(b"RECHAZADO\n")
+                                motores.send_command("OTRO") # Es reciclable pero va a otra caja
+                        else:
+                            logger.warning(f"-> RECHAZADO: {clase_limpia}")
+                            sensores.send_command("RECHAZADO")
+                            motores.send_command("OTRO") # Banda de descarte
+                    else:
+                        logger.error("Fallo al capturar foto.")
+                        sensores.send_command("RECHAZADO")
 
-                        elif msg == "TERMINAR":
-                            print("\n--- Fin Sesion Detectado ---")
-                            print("Solicitando niveles finales a Arduino...")
-                            # 1. PEDIMOS LOS NIVELES AHORA
-                            arduino_sensores.write(b"LEER_ULTRASONICOS\n")
-                            # 2. CERRAMOS EL BUCLE
-                            # La respuesta "NIVELES:..." llegara en unos milisegundos
-                            # y sera capturada por el Bucle de la FASE 1.
-                            session_active = False 
+                # --- EVENTO: EL USUARIO O EL TIMEOUT FINALIZÓ LA SESIÓN ---
+                elif arduino_msg == "TERMINAR":
+                    logger.info("El Arduino de sensores ha terminado la sesión.")
+                    session_active = False 
 
-                    except: pass
-
-    except KeyboardInterrupt: print("\nPrograma detenido.")
+    except KeyboardInterrupt:
+        logger.info("Programa detenido manualmente por el operador (Ctrl+C).")
+    except Exception as e:
+        logger.critical(f"Error inesperado en el bucle principal: {e}", exc_info=True)
     finally:
-        if arduino_sensores and arduino_sensores.is_open: arduino_sensores.close()
-        if arduino_motores and arduino_motores.is_open: arduino_motores.close()
-        if qr_ser and qr_ser.is_open: qr_ser.close()
-        if camera: camera.close()
-        print("Limpieza completa.")
+        # Limpieza rigurosa de recursos
+        logger.info("Limpiando recursos y cerrando puertos...")
+        sensores.close()
+        motores.close()
+        escaner_qr.close()
+        if camera:
+            camera.close()
+        logger.info("=== SISTEMA APAGADO CORRECTAMENTE ===")
 
 if __name__ == "__main__":
     main()

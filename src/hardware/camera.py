@@ -1,65 +1,51 @@
-import time
 import os
+import time
+import logging
+from typing import Optional
 from picamera2 import Picamera2
 
-def setup_camera():
-    """Inicializa y configura el objeto de la cámara."""
+# Importamos las rutas seguras que creamos en el paso anterior
+from config import settings
+
+# Configuramos el logger para este módulo
+logger = logging.getLogger(__name__)
+
+def setup_camera() -> Optional[Picamera2]:
+    """Inicializa y configura la cámara con autoenfoque."""
     try:
         picam2 = Picamera2()
-        # Configuración para tener una previsualización si es necesario (no se muestra en este script)
         preview_config = picam2.create_preview_configuration()
         picam2.configure(preview_config)
         picam2.start()
         
-        # Activar enfoque automático continuo, crucial para fotos nítidas
         picam2.set_controls({"AfMode": 2, "AfTrigger": 0})
-        print("Cámara inicializada con autoenfoque continuo.")
-        # Damos un momento para que la cámara se estabilice
+        logger.info("Cámara inicializada con autoenfoque continuo.")
         time.sleep(2)
         return picam2
     except Exception as e:
-        print(f"Error al inicializar la cámara: {e}")
+        logger.critical(f"No se pudo inicializar la cámara. Detalle: {e}")
         return None
 
-def take_photo(picam2, folder="images"):
-    """
-    Toma una fotografía con autoenfoque y la guarda en la carpeta especificada.
-    
-    Args:
-        picam2: El objeto de la cámara ya inicializado.
-        folder: La carpeta donde se guardarán las imágenes.
-
-    Returns:
-        str: La ruta completa al archivo guardado, o None si falla.
-    """
+def take_photo(picam2: Picamera2) -> Optional[str]:
+    """Toma una fotografía, la guarda en la ruta configurada y retorna el path."""
     if not picam2:
-        print("La cámara no está disponible.")
-        return
+        logger.error("Intento de captura sin cámara disponible.")
+        return None
 
     try:
-        # 1. Asegurarse de que la carpeta de imágenes exista
-        os.makedirs(folder, exist_ok=True)
-
-        # 2. Generar un nombre de archivo único con la fecha y hora
+        os.makedirs(settings.IMAGES_DIR, exist_ok=True)
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filepath = os.path.join(folder, f"captura_{timestamp}.jpg")
+        filepath = os.path.join(settings.IMAGES_DIR, f"captura_{timestamp}.jpg")
 
-        print("Enfocando y preparando para la captura...")
-        
-        # 3. Cambiar a configuración de alta resolución para la captura
+        logger.info("Enfocando y preparando para la captura...")
         capture_config = picam2.create_still_configuration(main={"size": (1280, 720)})
         picam2.switch_mode(capture_config)
-        
-        # 4. Esperar 1 segundo para que el autoenfoque se ajuste bien
         time.sleep(1)
 
-        # 5. Tomar y guardar la foto en formato PNG
         picam2.capture_file(filepath)
-        print(f"¡Foto guardada exitosamente en: {filepath}!")
-
-        # 6. Devolver la ruta del archivo para que otros módulos puedan usarlo
+        logger.info(f"Foto guardada exitosamente en: {filepath}")
+        
         return filepath
-
     except Exception as e:
-        print(f"Ocurrió un error al tomar la foto: {e}")
+        logger.error(f"Fallo al tomar la foto: {e}")
         return None
