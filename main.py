@@ -16,7 +16,7 @@ from src.services.auth_service import validate_token
 from src.ml.classifier import WasteClassifier
 
 # ============================================================================
-# ⚙️ CONFIGURACIÓN DEL LOGGING GLOBAL
+# CONFIGURACIÓN DEL LOGGING GLOBAL
 # ============================================================================
 logging.basicConfig(
     level=logging.INFO,
@@ -60,7 +60,7 @@ def main():
 
     try:
         # ============================================================================
-        # 🔄 BUCLE PRINCIPAL DEL SISTEMA (MÁQUINA DE ESTADOS)
+        # BUCLE PRINCIPAL DEL SISTEMA MÁQUINA DE ESTADOS
         # ============================================================================
         while True:
             logger.info("--- FASE 1: ESPERANDO USUARIO (QR) ---")
@@ -105,7 +105,7 @@ def main():
                     filepath = take_photo(camera)
                 
                     if filepath:
-                        # 🧠 INFERENCIA LOCAL DE IA
+                        # INFERENCIA LOCAL DE IA
                         predicted_class, confidence = ia_classifier.predict(filepath)
                         logger.info(f"IA Predice: {predicted_class} (Confianza: {confidence:.2f})")
                         
