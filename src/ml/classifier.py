@@ -3,10 +3,7 @@ import time
 import logging
 import numpy as np
 from PIL import Image
-
-# Importar TensorFlow
 import tensorflow as tf
-
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -19,7 +16,16 @@ MODEL_TYPE = 'TFLITE'  # <-- ¡CAMBIA ESTO PARA PROBAR EL OTRO MODELO!
 
 # Ajusta estas clases según el orden exacto en el que entrenaste tu modelo.
 # Ej: Si la salida 0 es Aluminio, la 1 es Plastico, etc.
-CLASS_NAMES = ["Aluminio", "Plastico", "Otro"]
+# --- CONFIGURACIÓN FIJA ---
+# Actualiza esta lista con el orden exacto de tu entrenamiento
+# crushed_metal, crushed_plastic, metal, no_reciclable, plastic
+CLASS_NAMES = [
+    "metal aplastado",   # Índice 0
+    "plastico aplastado", # Índice 1
+    "metal",             # Índice 2
+    "no reciclable",     # Índice 3
+    "plastico"           # Índice 4
+]
 
 # Tamaño de imagen que espera tu modelo (Típicamente 224x224)
 TARGET_IMAGE_SIZE = (224, 224) 
@@ -118,12 +124,17 @@ class WasteClassifier:
             logger.error(f"Error durante la predicción: {e}")
             return "Error de IA", 0.0
 
-    def is_recyclable(self, predicted_class: str, confidence: float, threshold: float = 0.60) -> bool:
-        """Determina si se aprueba el reciclaje basado en la predicción y un umbral de confianza."""
+    def is_recyclable(self, predicted_label: str, confidence: float, threshold: float = 0.60) -> bool:
+        """Determina si se aprueba el depósito del residuo."""
         if confidence < threshold:
-            logger.warning(f"Confianza baja ({confidence:.2f}). Se rechaza por seguridad.")
+            logger.warning(f"Confianza insuficiente ({confidence:.2f}). Rechazado.")
             return False
             
-        # Define aquí qué clases consideras reciclables válidas
-        clases_validas = ["Aluminio", "Plastico"] 
-        return predicted_class in clases_validas
+        # Clases que el contenedor está programado para aceptar basado en el nuevo array
+        clases_validas = [
+            "metal", 
+            "metal aplastado", 
+            "plastico", 
+            "plastico aplastado"
+        ]
+        return predicted_label in clases_validas

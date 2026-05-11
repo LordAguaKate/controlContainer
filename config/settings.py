@@ -8,7 +8,7 @@ load_dotenv()
 # --- HARDWARE SETTINGS ---
 ARDUINO_SENSORES_PORT = os.getenv("ARDUINO_SENSORES_PORT", "/dev/ttyUSB0")
 ARDUINO_MOTORES_PORT = os.getenv("ARDUINO_MOTORES_PORT", "/dev/ttyUSB1")
-QR_SCANNER_PORT = os.getenv("ARDUINO_MOTORES_PORT", "/dev/ttyACM0")
+QR_SCANNER_PORT = os.getenv("QR_SCANNER_PORT", "/dev/ttyACM0")
 BAUD_RATE = int(os.getenv("BAUD_RATE", 9600))
 
 # --- API & DB SETTINGS ---

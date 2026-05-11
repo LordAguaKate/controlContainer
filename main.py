@@ -16,7 +16,7 @@ from src.services.auth_service import validate_token
 from src.ml.classifier import WasteClassifier
 
 # ============================================================================
-# CONFIGURACIÓN DEL LOGGING GLOBAL
+# ⚙️ CONFIGURACIÓN DEL LOGGING GLOBAL
 # ============================================================================
 logging.basicConfig(
     level=logging.INFO,
@@ -60,7 +60,7 @@ def main():
 
     try:
         # ============================================================================
-        # BUCLE PRINCIPAL DEL SISTEMA MÁQUINA DE ESTADOS
+        # 🔄 BUCLE PRINCIPAL DEL SISTEMA (MÁQUINA DE ESTADOS)
         # ============================================================================
         while True:
             logger.info("--- FASE 1: ESPERANDO USUARIO (QR) ---")
@@ -105,28 +105,39 @@ def main():
                     filepath = take_photo(camera)
                 
                     if filepath:
-                        # INFERENCIA LOCAL DE IA
+                        # 🧠 INFERENCIA LOCAL DE IA
                         predicted_class, confidence = ia_classifier.predict(filepath)
                         logger.info(f"IA Predice: {predicted_class} (Confianza: {confidence:.2f})")
                         
                         is_recyclable = ia_classifier.is_recyclable(predicted_class, confidence)
                         clase_limpia = strip_accents(predicted_class).upper()
 
-                        if is_recyclable:
+                        # --- CASO 1: RECHAZO FÍSICO (Baja Confianza) ---
+                        if confidence < 0.60:
+                            logger.warning(f"-> RECHAZADO (Baja Confianza): {clase_limpia}")
+                            sensores.send_command("RECHAZADO")
+                            # ¡CRÍTICO! NO enviamos comando a motores. 
+                            # La banda no se mueve, obligando al usuario a sacar el objeto con la mano.
+
+                        # --- CASO 2: CLASIFICACIÓN EXITOSA (Reciclable o Basura) ---
+                        else:
                             logger.info(f"-> APROBADO: {clase_limpia}")
+                            
+                            # La pantalla del Arduino Sensores mostrará la clase exacta (ej. METAL APLASTADO)
                             sensores.send_command(f"APROBADO:{clase_limpia}")
                             
-                            # Lógica de motores basada en la predicción
-                            if "ALUMINIO" in clase_limpia:
-                                motores.send_command("ALUMINIO")
+                            # --- MAPEO DE IA A MOTORES ---
+                            # Si la palabra METAL está en la predicción (cubre normal y aplastado)
+                            if "METAL" in clase_limpia:
+                                # Tu Arduino de motores espera el comando "ALUMINIO"
+                                motores.send_command("ALUMINIO") 
+                                
+                            # Si la palabra PLASTICO está en la predicción
                             elif "PLASTICO" in clase_limpia:
                                 motores.send_command("PLASTICO")
+                                
                             else:
-                                motores.send_command("OTRO") # Es reciclable pero va a otra caja
-                        else:
-                            logger.warning(f"-> RECHAZADO: {clase_limpia}")
-                            sensores.send_command("RECHAZADO")
-                            motores.send_command("OTRO") # Banda de descarte
+                                motores.send_command("OTRO")
                     else:
                         logger.error("Fallo al capturar foto.")
                         sensores.send_command("RECHAZADO")
